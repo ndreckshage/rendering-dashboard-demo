@@ -1,5 +1,14 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Todos
+
+- Vercel Env: This doesnt work when using vercel since lambdas etc. Rather than storing this remote ... we should adjust this so that generate load makes client side queries and then stores the results in browser memory etc.
+- Component Improvement: Lets also improve some of our components. Every component in core pdp section should be individual. ATC for example shouldnt be with ProductOptions. Lets also adjust some of our query / component names. also all PascalCase
+  -- shell => Layout
+  -- pdp => title
+- Number of calls: Would like to be able to easily see total number of queries / and calls to subgraphs. Filter by calls to subgraphs.
+- Update readme and a plan for how we would actually implement this for Datadog metrics. Is there a path to write to DD, use those metrics, but to power this interface?
+
 ## Getting Started
 
 First, run the development server:
