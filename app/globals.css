@@ -12,8 +12,17 @@
   --font-mono: var(--font-geist-mono);
 }
 
-button, a, [role="button"], select {
-  cursor: pointer;
+@layer base {
+  button,
+  [type="button"],
+  [type="reset"],
+  [type="submit"],
+  [role="button"],
+  a,
+  select,
+  summary {
+    cursor: pointer !important;
+  }
 }
 
 body {
