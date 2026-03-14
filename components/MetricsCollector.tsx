@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from "react";
 import { clientMetricsStore, type LoAFEntry } from "@/lib/client-metrics-store";
-import { simulateCsrQueries } from "@/lib/csr-simulation";
 import type {
   BoundaryMetric,
   FetchMetric,
@@ -23,9 +22,9 @@ interface Props {
 const LOAF_OBSERVE_WINDOW_MS = 5000;
 
 /**
- * Client component that persists server-rendered metrics to localStorage,
- * runs CSR query simulation, and observes Long Animation Frames during
- * page initialization.
+ * Client component that persists server-rendered metrics to localStorage
+ * and observes Long Animation Frames during page initialization.
+ * CSR query simulation is handled by ClientQueryOrchestrator.
  *
  * Rendered inside MetricsEmbed's Suspense boundary, so it only mounts
  * after all boundaries have been recorded and the data has streamed in.
@@ -45,22 +44,6 @@ export function MetricsCollector({ metrics }: Props) {
 
     clientMetricsStore.addPageLoad(metrics);
     stored.current = true;
-
-    // --- CSR query simulation ---
-    const requestStartTs =
-      metrics.boundaries[0].timestamp - metrics.boundaries[0].wall_start_ms;
-    const maxSsrEnd = Math.max(
-      ...metrics.boundaries.map(
-        (b) => b.wall_start_ms + b.render_duration_ms,
-      ),
-    );
-    const hydrationMs = maxSsrEnd + 50; // ~50ms hydration overhead
-
-    simulateCsrQueries(requestId, requestStartTs, hydrationMs).then(
-      (csrResult) => {
-        clientMetricsStore.appendCsrMetrics(requestId, csrResult);
-      },
-    );
 
     // --- Long Animation Frame observer ---
     if (typeof PerformanceObserver !== "undefined") {
