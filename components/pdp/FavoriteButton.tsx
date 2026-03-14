@@ -1,34 +1,27 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useCsrQuery } from "@/lib/csr-query-context";
 
 /**
  * Client-side favorite/heart button overlaid on the hero image.
- * Simulates fetching favorite status from getUserFavorites CSR query.
+ * Waits for the actual getUserFavorites CSR query to resolve before showing status.
  */
 export function FavoriteButton() {
-  const [status, setStatus] = useState<"loading" | "saved" | "unsaved">(
-    "loading",
-  );
+  const queryStatus = useCsrQuery("getUserFavorites");
+  const [toggled, setToggled] = useState(false);
 
-  useEffect(() => {
-    // Simulate favorites data arriving after getUserFavorites resolves
-    const timer = setTimeout(() => {
-      setStatus("unsaved");
-    }, 100);
-    return () => clearTimeout(timer);
-  }, []);
-
-  const isSaved = status === "saved";
+  // Query resolves with "saved" state; user can toggle after
+  const isSaved = queryStatus === "complete" ? !toggled : false;
 
   return (
     <button
-      onClick={() => setStatus(isSaved ? "unsaved" : "saved")}
-      disabled={status === "loading"}
+      onClick={() => setToggled((prev) => !prev)}
+      disabled={queryStatus === "pending"}
       className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full bg-zinc-900/70 backdrop-blur-sm border border-zinc-700 hover:border-zinc-500 transition-colors"
       aria-label={isSaved ? "Remove from favorites" : "Add to favorites"}
     >
-      {status === "loading" ? (
+      {queryStatus === "pending" ? (
         <span className="text-zinc-500 text-lg animate-pulse">&#9825;</span>
       ) : isSaved ? (
         <span className="text-red-400 text-lg">&#9829;</span>

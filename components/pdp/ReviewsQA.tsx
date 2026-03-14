@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCsrQuery } from "@/lib/csr-query-context";
 
 interface QAItem {
   question: string;
@@ -31,17 +31,10 @@ const MOCK_QA: QAItem[] = [
 
 /**
  * Client-side Q&A section loaded after hydration via getReviewsQA CSR query.
+ * Waits for the actual query simulation to resolve before showing content.
  */
 export function ReviewsQA() {
-  const [qa, setQa] = useState<QAItem[] | null>(null);
-
-  useEffect(() => {
-    // Simulate Q&A data arriving after getReviewsQA resolves
-    const timer = setTimeout(() => {
-      setQa(MOCK_QA);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, []);
+  const status = useCsrQuery("getReviewsQA");
 
   return (
     <div className="px-6 py-6 border-t border-zinc-800">
@@ -49,7 +42,7 @@ export function ReviewsQA() {
         Questions & Answers
       </h2>
 
-      {qa === null ? (
+      {status === "pending" ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="space-y-2">
@@ -60,7 +53,7 @@ export function ReviewsQA() {
         </div>
       ) : (
         <div className="space-y-4">
-          {qa.map((item, i) => (
+          {MOCK_QA.map((item, i) => (
             <div key={i} className="border-t border-zinc-800/50 pt-3 first:border-0 first:pt-0">
               <div className="flex gap-2 mb-1">
                 <span className="text-blue-400 font-bold text-sm flex-shrink-0">Q:</span>

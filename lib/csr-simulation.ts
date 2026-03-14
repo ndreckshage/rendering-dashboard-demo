@@ -76,6 +76,7 @@ export async function simulateCsrQueries(
   requestId: string,
   requestStartTs: number,
   hydrationMs: number,
+  onQueryComplete?: (queryName: string) => void,
 ): Promise<CsrSimulationResult> {
   const boundaries: BoundaryMetric[] = [];
   const queries: QueryMetric[] = [];
@@ -162,6 +163,9 @@ export async function simulateCsrQueries(
       is_lcp_critical: false,
       phase: "csr",
     });
+
+    // Notify UI that this query has resolved
+    onQueryComplete?.(queryName);
   }
 
   // Run all queries with a timeout cap

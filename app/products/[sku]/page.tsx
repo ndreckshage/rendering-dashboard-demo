@@ -120,7 +120,10 @@ export default async function PDPPage({
   });
 
   return (
-    <>
+    <ClientQueryOrchestrator
+      requestId={ctx.requestId}
+      requestStartTs={ctx.requestStartTs}
+    >
       {/* Nav */}
       <TracedBoundary
         name="Nav"
@@ -427,12 +430,6 @@ export default async function PDPPage({
       {/* Embed metrics in HTML — streams in after all boundaries complete.
           Includes MetricsCollector client component that persists to localStorage. */}
       <MetricsEmbed requestId={ctx.requestId} />
-
-      {/* Client-side query simulation — fires post-hydration CSR queries */}
-      <ClientQueryOrchestrator
-        requestId={ctx.requestId}
-        requestStartTs={ctx.requestStartTs}
-      />
-    </>
+    </ClientQueryOrchestrator>
   );
 }
