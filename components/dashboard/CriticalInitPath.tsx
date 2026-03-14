@@ -1,9 +1,70 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useRef, useCallback, type ReactNode } from "react";
 import type { BoundaryMetric, QueryMetric } from "@/lib/metrics-store";
 import type { LoAFEntry, NavigationTiming } from "@/lib/client-metrics-store";
 import { percentile } from "@/lib/percentile";
+
+function Tooltip({ content, children, className, style }: { content: ReactNode; children: ReactNode; className?: string; style?: React.CSSProperties }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+
+  const onEnter = useCallback((e: React.MouseEvent) => {
+    setPos({ x: e.clientX, y: e.clientY });
+    setShow(true);
+  }, []);
+
+  const onMove = useCallback((e: React.MouseEvent) => {
+    setPos({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const onLeave = useCallback(() => setShow(false), []);
+
+  return (
+    <div
+      onMouseEnter={onEnter}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      className={className ?? "relative"}
+      style={style}
+    >
+      {children}
+      {show && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: pos.x + 12, top: pos.y - 8 }}
+        >
+          <div className="bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 shadow-xl text-xs font-mono text-zinc-200 max-w-sm">
+            {content}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface TooltipLine {
+  label: string;
+  value: string | number;
+  color?: string;
+}
+
+function TooltipContent({ title, lines, tag }: { title: string; lines: TooltipLine[]; tag?: string }) {
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-zinc-100 font-medium">{title}</span>
+        {tag && <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400">{tag}</span>}
+      </div>
+      {lines.map((line, i) => (
+        <div key={i} className="flex justify-between gap-4">
+          <span className="text-zinc-500">{line.label}</span>
+          <span className={line.color ?? "text-zinc-200"}>{line.value}</span>
+        </div>
+      ))}
+    </>
+  );
+}
 
 interface Props {
   boundaries: BoundaryMetric[];
@@ -403,33 +464,44 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                 );
                 const color = BOUNDARY_COLORS[t.name] ?? "rgb(100, 116, 139)";
 
-                const queryTooltip = t.cached
-                  ? `${t.name} (${t.boundaryPath})\nQuery: ${t.queryName}\nCached (deduped by React cache())`
-                  : `${t.name} (${t.boundaryPath})\nQuery: ${t.queryName}\nWall start: ${t.wallStart}ms\nFetch: ${t.fetchDuration}ms\nRender cost: ${t.renderCost}ms${t.blocked > 0 ? `\nBlocked: ${t.blocked}ms` : ""}\nTotal: ${t.total}ms${t.lcpCritical ? "\nLCP Critical" : ""}`;
+                const tooltipLines: TooltipLine[] = t.cached
+                  ? [{ label: "Query", value: t.queryName }, { label: "Status", value: "Cached (React cache() dedup)", color: "text-cyan-400" }]
+                  : [
+                      { label: "Query", value: t.queryName },
+                      { label: "Wall start", value: `${t.wallStart}ms` },
+                      { label: "Fetch", value: `${t.fetchDuration}ms`, color: "text-zinc-100" },
+                      { label: "Render cost", value: `${t.renderCost}ms` },
+                      ...(t.blocked > 0 ? [{ label: "Blocked", value: `${t.blocked}ms`, color: "text-amber-400" }] : []),
+                      { label: "Total", value: `${t.total}ms`, color: "text-zinc-100" },
+                    ];
 
                 return (
-                  <div key={t.boundaryPath} className="relative h-7">
-                    {/* Query bar (outer) */}
-                    <div
-                      title={queryTooltip}
-                      className={`absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default ${
-                        t.cached
-                          ? "opacity-40 border border-dashed border-zinc-600"
-                          : ""
-                      }`}
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${widthPct}%`,
-                        backgroundColor: t.cached ? "transparent" : color,
-                        opacity: t.lcpCritical ? 1 : 0.7,
-                      }}
-                    >
-                      <span className="text-xs text-white px-1.5 truncate font-mono">
-                        {t.name}{" "}
-                        {t.cached ? "(cached)" : `(${t.fetchDuration}ms)`}
-                      </span>
+                  <Tooltip
+                    key={t.boundaryPath}
+                    content={<TooltipContent title={t.name} lines={tooltipLines} tag={t.lcpCritical ? "LCP" : undefined} />}
+                  >
+                    <div className="relative h-7">
+                      {/* Query bar (outer) */}
+                      <div
+                        className={`absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default ${
+                          t.cached
+                            ? "opacity-40 border border-dashed border-zinc-600"
+                            : ""
+                        }`}
+                        style={{
+                          left: `${leftPct}%`,
+                          width: `${widthPct}%`,
+                          backgroundColor: t.cached ? "transparent" : color,
+                          opacity: t.lcpCritical ? 1 : 0.7,
+                        }}
+                      >
+                        <span className="text-xs text-white px-1.5 truncate font-mono">
+                          {t.name}{" "}
+                          {t.cached ? "(cached)" : `(${t.fetchDuration}ms)`}
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  </Tooltip>
                 );
               })}
           </div>
@@ -476,25 +548,37 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
               const widthPct = Math.max((block.duration / maxMs) * 100, 1.5);
               const color = BOUNDARY_COLORS[block.name] ?? "rgb(100, 116, 139)";
 
-              const renderTooltip = `${block.name}\nRender start: ${Math.round(block.start)}ms\nRender cost: ${block.duration}ms (sync, blocks thread)${block.lcpCritical ? "\nLCP Critical" : ""}`;
-
               return (
-                <div
+                <Tooltip
                   key={block.name}
-                  title={renderTooltip}
-                  className={`absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default ${
-                    block.lcpCritical ? "ring-1 ring-blue-400" : ""
+                  className={`absolute top-0 h-full cursor-default ${
+                    block.lcpCritical ? "ring-1 ring-blue-400 rounded" : ""
                   }`}
                   style={{
                     left: `${leftPct}%`,
                     width: `${widthPct}%`,
-                    backgroundColor: color,
                   }}
+                  content={
+                    <TooltipContent
+                      title={block.name}
+                      lines={[
+                        { label: "Render start", value: `${Math.round(block.start)}ms` },
+                        { label: "Render cost", value: `${block.duration}ms`, color: "text-zinc-100" },
+                        { label: "Type", value: "Sync (blocks thread)" },
+                      ]}
+                      tag={block.lcpCritical ? "LCP" : undefined}
+                    />
+                  }
                 >
-                  <span className="text-xs text-white px-1 truncate font-mono">
-                    {block.name} ({block.duration}ms)
-                  </span>
-                </div>
+                  <div
+                    className="h-full rounded flex items-center overflow-hidden"
+                    style={{ backgroundColor: color }}
+                  >
+                    <span className="text-xs text-white px-1 truncate font-mono">
+                      {block.name} ({block.duration}ms)
+                    </span>
+                  </div>
+                </Tooltip>
               );
             })}
           </div>
@@ -572,32 +656,44 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                 const color =
                   BOUNDARY_COLORS[t.name] ?? "rgb(168, 85, 247)";
 
-                const csrTooltip = `${t.name} (${t.boundaryPath})\nQuery: ${t.queryName}\nStarts at: ${Math.round(t.wallStart)}ms (from request start)\nFetch: ${t.fetchDuration}ms\nPhase: CSR (post-hydration)`;
-
                 return (
-                  <div key={t.boundaryPath} className="relative h-7">
-                    <div
-                      title={csrTooltip}
-                      className="absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default"
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${widthPct}%`,
-                        background: `repeating-linear-gradient(
-                          135deg,
-                          ${color},
-                          ${color} 3px,
-                          transparent 3px,
-                          transparent 6px
-                        )`,
-                        backgroundColor: color,
-                        opacity: 0.85,
-                      }}
-                    >
-                      <span className="text-xs text-white px-1.5 truncate font-mono drop-shadow-sm">
-                        {t.name} ({t.fetchDuration}ms)
-                      </span>
+                  <Tooltip
+                    key={t.boundaryPath}
+                    content={
+                      <TooltipContent
+                        title={t.name}
+                        lines={[
+                          { label: "Query", value: t.queryName },
+                          { label: "Starts at", value: `${Math.round(t.wallStart)}ms` },
+                          { label: "Fetch", value: `${t.fetchDuration}ms`, color: "text-zinc-100" },
+                        ]}
+                        tag="CSR"
+                      />
+                    }
+                  >
+                    <div className="relative h-7">
+                      <div
+                        className="absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default"
+                        style={{
+                          left: `${leftPct}%`,
+                          width: `${widthPct}%`,
+                          background: `repeating-linear-gradient(
+                            135deg,
+                            ${color},
+                            ${color} 3px,
+                            transparent 3px,
+                            transparent 6px
+                          )`,
+                          backgroundColor: color,
+                          opacity: 0.85,
+                        }}
+                      >
+                        <span className="text-xs text-white px-1.5 truncate font-mono drop-shadow-sm">
+                          {t.name} ({t.fetchDuration}ms)
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  </Tooltip>
                 );
               })}
             </div>
@@ -684,44 +780,54 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                         .join(", ")
                     : "";
 
-                const loafTooltip = `Long Animation Frame\nStart: ${Math.round(entry.startTime)}ms\nTotal duration: ${Math.round(entry.duration)}ms\nBlocking duration: ${Math.round(entry.blockingDuration)}ms${entry.scripts.length > 0 ? `\n\nScripts:\n${entry.scripts.map((s) => {
-                  const file = s.sourceURL.split("/").pop() ?? s.sourceURL;
-                  const fn = s.sourceFunctionName || "(anonymous)";
-                  return `  ${fn} in ${file} (${s.duration}ms, ${s.invokerType})`;
-                }).join("\n")}` : ""}`;
+                const loafLines: TooltipLine[] = [
+                  { label: "Start", value: `${Math.round(entry.startTime)}ms` },
+                  { label: "Total duration", value: `${Math.round(entry.duration)}ms` },
+                  { label: "Blocking", value: `${Math.round(entry.blockingDuration)}ms`, color: "text-red-400" },
+                  ...entry.scripts.map((s) => {
+                    const file = s.sourceURL.split("/").pop() ?? s.sourceURL;
+                    const fn = s.sourceFunctionName || "(anonymous)";
+                    return { label: fn, value: `${file} (${s.duration}ms)`, color: "text-zinc-400" as string };
+                  }),
+                ];
 
                 return (
-                  <div key={i} className="relative h-7" title={loafTooltip}>
-                    {/* Total duration (dimmer) */}
-                    <div
-                      className="absolute top-0 h-full rounded overflow-hidden cursor-default"
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${totalWidthPct}%`,
-                        backgroundColor: "rgb(239, 68, 68)",
-                        opacity: 0.3,
-                      }}
-                    />
-                    {/* Blocking duration (bright) */}
-                    <div
-                      className="absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default"
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${Math.max(blockingWidthPct, 1)}%`,
-                        backgroundColor: "rgb(239, 68, 68)",
-                        opacity: 0.8,
-                      }}
-                    >
-                      <span className="text-xs text-white px-1.5 truncate font-mono">
-                        {Math.round(entry.blockingDuration)}ms blocking
-                        {scriptSummary && (
-                          <span className="text-red-200 ml-1">
-                            {scriptSummary}
-                          </span>
-                        )}
-                      </span>
+                  <Tooltip
+                    key={i}
+                    content={<TooltipContent title="Long Animation Frame" lines={loafLines} tag="LoAF" />}
+                  >
+                    <div className="relative h-7">
+                      {/* Total duration (dimmer) */}
+                      <div
+                        className="absolute top-0 h-full rounded overflow-hidden cursor-default"
+                        style={{
+                          left: `${leftPct}%`,
+                          width: `${totalWidthPct}%`,
+                          backgroundColor: "rgb(239, 68, 68)",
+                          opacity: 0.3,
+                        }}
+                      />
+                      {/* Blocking duration (bright) */}
+                      <div
+                        className="absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default"
+                        style={{
+                          left: `${leftPct}%`,
+                          width: `${Math.max(blockingWidthPct, 1)}%`,
+                          backgroundColor: "rgb(239, 68, 68)",
+                          opacity: 0.8,
+                        }}
+                      >
+                        <span className="text-xs text-white px-1.5 truncate font-mono">
+                          {Math.round(entry.blockingDuration)}ms blocking
+                          {scriptSummary && (
+                            <span className="text-red-200 ml-1">
+                              {scriptSummary}
+                            </span>
+                          )}
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  </Tooltip>
                 );
               })}
             </div>
