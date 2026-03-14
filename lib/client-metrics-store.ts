@@ -27,6 +27,17 @@ export interface LoAFEntry {
   }[];
 }
 
+/** Navigation timing snapshot captured during page initialization */
+export interface NavigationTiming {
+  domInteractive: number;
+  domContentLoaded: number;
+  loadEvent: number;
+  /** Total Blocking Time: sum of (duration - 50ms) for all long animation frames */
+  tbt: number;
+  /** Total number of long animation frames observed */
+  loafCount: number;
+}
+
 export interface ClientMetrics {
   boundaries: BoundaryMetric[];
   fetches: FetchMetric[];
@@ -37,6 +48,8 @@ export interface ClientMetrics {
   hydrationTimes?: Record<string, number>;
   /** Long Animation Frame entries per requestId */
   loafEntries?: Record<string, LoAFEntry[]>;
+  /** Navigation timing per requestId */
+  navigationTimings?: Record<string, NavigationTiming>;
 }
 
 /**
@@ -189,6 +202,20 @@ export const clientMetricsStore = {
       loafEntries: {
         ...current.loafEntries,
         [requestId]: [...(current.loafEntries?.[requestId] ?? []), ...entries],
+      },
+    };
+    saveToStorage(merged);
+  },
+
+  /** Store navigation timing for a page load */
+  appendNavigationTiming(requestId: string, timing: NavigationTiming) {
+    const current = loadFromStorage();
+    if (!current.boundaries.some((b) => b.requestId === requestId)) return;
+    const merged: ClientMetrics = {
+      ...current,
+      navigationTimings: {
+        ...current.navigationTimings,
+        [requestId]: timing,
       },
     };
     saveToStorage(merged);

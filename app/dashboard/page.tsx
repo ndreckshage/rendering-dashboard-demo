@@ -137,6 +137,7 @@ export default function DashboardPage() {
               pctl={pctl}
               hydrationTimes={metrics?.hydrationTimes}
               loafEntries={metrics?.loafEntries}
+              navigationTimings={metrics?.navigationTimings}
             />
           ) : activeTab === "tree" ? (
             <BoundaryTreeTable

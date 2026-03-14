@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { BoundaryMetric, QueryMetric } from "@/lib/metrics-store";
-import type { LoAFEntry } from "@/lib/client-metrics-store";
+import type { LoAFEntry, NavigationTiming } from "@/lib/client-metrics-store";
 import { percentile } from "@/lib/percentile";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   pctl: number;
   hydrationTimes?: Record<string, number>;
   loafEntries?: Record<string, LoAFEntry[]>;
+  navigationTimings?: Record<string, NavigationTiming>;
 }
 
 interface BoundaryTiming {
@@ -54,7 +55,7 @@ function median(values: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, loafEntries }: Props) {
+export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, loafEntries, navigationTimings }: Props) {
   // Separate SSR and CSR metrics
   const ssrBoundaries = useMemo(
     () => boundaries.filter((b) => b.phase !== "csr"),
@@ -105,6 +106,20 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
         scripts: entries[0].scripts, // representative scripts from first entry
       }));
   }, [loafEntries]);
+
+  // Aggregate navigation timing across page loads
+  const navTiming = useMemo(() => {
+    if (!navigationTimings) return null;
+    const values = Object.values(navigationTimings);
+    if (values.length === 0) return null;
+    return {
+      domInteractive: median(values.map((t) => t.domInteractive)),
+      domContentLoaded: median(values.map((t) => t.domContentLoaded)),
+      loadEvent: median(values.map((t) => t.loadEvent)),
+      tbt: median(values.map((t) => t.tbt)),
+      loafCount: median(values.map((t) => t.loafCount)),
+    };
+  }, [navigationTimings]);
 
   const { timings, maxMs, lcpDataReady, lcpRendered, lcpBlocked, shellEnd } =
     useMemo(() => {
@@ -620,24 +635,24 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
       )}
 
       {/* Long Animation Frames */}
-      {aggregatedLoaf.length > 0 && (
-        <div>
-          <div className="text-xs text-zinc-400 mb-2 font-medium">
-            Long Animation Frames{" "}
-            <span className="text-zinc-600">(client JS blocking)</span>
+      <div>
+        <div className="text-xs text-zinc-400 mb-2 font-medium">
+          Long Animation Frames{" "}
+          <span className="text-zinc-600">(client JS &gt;50ms)</span>
+        </div>
+        <div className="relative bg-zinc-900 rounded border border-zinc-800 p-3">
+          {/* Grid lines */}
+          <div className="absolute inset-3 flex justify-between pointer-events-none">
+            {[0, 25, 50, 75, 100].map((pct) => (
+              <div
+                key={pct}
+                className="w-px bg-zinc-800"
+                style={{ height: "100%" }}
+              />
+            ))}
           </div>
-          <div className="relative bg-zinc-900 rounded border border-zinc-800 p-3">
-            {/* Grid lines */}
-            <div className="absolute inset-3 flex justify-between pointer-events-none">
-              {[0, 25, 50, 75, 100].map((pct) => (
-                <div
-                  key={pct}
-                  className="w-px bg-zinc-800"
-                  style={{ height: "100%" }}
-                />
-              ))}
-            </div>
 
+          {aggregatedLoaf.length > 0 ? (
             <div className="space-y-1.5 relative">
               {aggregatedLoaf.map((entry, i) => {
                 const leftPct = (entry.startTime / maxMs) * 100;
@@ -693,19 +708,25 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                 );
               })}
             </div>
+          ) : (
+            <div className="relative h-7 flex items-center">
+              <span className="text-xs text-zinc-600 font-mono">
+                No long animation frames detected during initialization
+              </span>
+            </div>
+          )}
 
-            {/* Hydration marker */}
-            {hydrationMs > 0 && (
-              <div
-                className="absolute top-3 bottom-3 w-px border-l border-dashed border-amber-400/60"
-                style={{
-                  left: `calc(${(hydrationMs / maxMs) * 100}% + 12px)`,
-                }}
-              />
-            )}
-          </div>
+          {/* Hydration marker */}
+          {hydrationMs > 0 && (
+            <div
+              className="absolute top-3 bottom-3 w-px border-l border-dashed border-amber-400/60"
+              style={{
+                left: `calc(${(hydrationMs / maxMs) * 100}% + 12px)`,
+              }}
+            />
+          )}
         </div>
-      )}
+      </div>
 
       {/* Summary */}
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs font-mono">
@@ -746,14 +767,40 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
             <span className="text-amber-400">{Math.round(hydrationMs)}ms</span>
           </div>
         )}
-        {aggregatedLoaf.length > 0 && (
+        {navTiming && (
           <div>
-            <span className="text-zinc-500">Long frames: </span>
-            <span className="text-red-400">
-              {aggregatedLoaf.length} ({Math.round(aggregatedLoaf.reduce((sum, e) => sum + e.blockingDuration, 0))}ms blocking)
+            <span className="text-zinc-500">DOM Interactive: </span>
+            <span className="text-cyan-400">{Math.round(navTiming.domInteractive)}ms</span>
+          </div>
+        )}
+        {navTiming && (
+          <div>
+            <span className="text-zinc-500">DCL: </span>
+            <span className="text-cyan-400">{Math.round(navTiming.domContentLoaded)}ms</span>
+          </div>
+        )}
+        {navTiming && navTiming.loadEvent > 0 && (
+          <div>
+            <span className="text-zinc-500">Load: </span>
+            <span className="text-cyan-400">{Math.round(navTiming.loadEvent)}ms</span>
+          </div>
+        )}
+        {navTiming && (
+          <div>
+            <span className="text-zinc-500">TBT: </span>
+            <span className={`font-medium ${navTiming.tbt > 200 ? "text-red-400" : navTiming.tbt > 50 ? "text-amber-400" : "text-green-400"}`}>
+              {Math.round(navTiming.tbt)}ms
             </span>
           </div>
         )}
+        <div>
+          <span className="text-zinc-500">Long frames: </span>
+          <span className="text-red-400">
+            {aggregatedLoaf.length > 0
+              ? `${aggregatedLoaf.length} (${Math.round(aggregatedLoaf.reduce((sum, e) => sum + e.blockingDuration, 0))}ms blocking)`
+              : "0"}
+          </span>
+        </div>
         {csrInitComplete > 0 && (
           <div>
             <span className="text-zinc-500">CSR init complete: </span>
