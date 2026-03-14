@@ -37,78 +37,109 @@ interface TreeItem {
   opName?: string;
   subgraphName?: string;
   lcpCritical?: boolean;
-  expectedFetchMs?: number;
 }
 
-const TREE_STRUCTURE: TreeItem[] = [
-  // shell
-  { path: "shell", name: "shell", type: "boundary", boundaryPath: "shell", lcpCritical: true, expectedFetchMs: 30 },
-  { path: "shell.query", name: "getExperimentContext", type: "query", boundaryPath: "shell", queryName: "getExperimentContext" },
-  { path: "shell.query.op", name: "experiment.context", type: "subgraph-op", boundaryPath: "shell", queryName: "getExperimentContext", opName: "experiment.context", subgraphName: "experimentation-subgraph" },
+/**
+ * Dynamically builds the tree structure from recorded metrics.
+ * Boundaries are ordered by median wall_start_ms, with queries and
+ * subgraph-ops nested underneath their parent boundary.
+ */
+function buildTreeFromMetrics(
+  boundaries: BoundaryMetric[],
+  queries: QueryMetric[],
+  subgraphOps: SubgraphOperationMetric[],
+): TreeItem[] {
+  // 1. Collect unique boundary paths, ordered by median wall_start_ms
+  const wallStartsByPath = new Map<string, number[]>();
+  const lcpByPath = new Map<string, boolean>();
+  for (const b of boundaries) {
+    const list = wallStartsByPath.get(b.boundary_path) ?? [];
+    list.push(b.wall_start_ms);
+    wallStartsByPath.set(b.boundary_path, list);
+    if (b.is_lcp_critical) lcpByPath.set(b.boundary_path, true);
+  }
 
-  // nav
-  { path: "shell.nav", name: "nav", type: "boundary", boundaryPath: "shell.nav", expectedFetchMs: 90 },
-  { path: "shell.nav.query", name: "getNavigation", type: "query", boundaryPath: "shell.nav", queryName: "getNavigation" },
-  { path: "shell.nav.query.op1", name: "cms.navigation", type: "subgraph-op", boundaryPath: "shell.nav", queryName: "getNavigation", opName: "cms.navigation", subgraphName: "cms-subgraph" },
+  const boundaryPaths = [...wallStartsByPath.keys()].sort((a, b) => {
+    const aMedian = median(wallStartsByPath.get(a)!);
+    const bMedian = median(wallStartsByPath.get(b)!);
+    return aMedian - bMedian;
+  });
 
-  // content (CMS layout fetch)
-  { path: "shell.content", name: "content", type: "boundary", boundaryPath: "shell.content", expectedFetchMs: 60 },
-  { path: "shell.content.query", name: "getContentLayout", type: "query", boundaryPath: "shell.content", queryName: "getContentLayout" },
-  { path: "shell.content.query.op1", name: "cms.layout", type: "subgraph-op", boundaryPath: "shell.content", queryName: "getContentLayout", opName: "cms.layout", subgraphName: "cms-subgraph" },
+  // 2. Collect unique queries per boundary
+  const queriesByBoundary = new Map<string, Set<string>>();
+  for (const q of queries) {
+    const set = queriesByBoundary.get(q.boundary_path) ?? new Set();
+    set.add(q.queryName);
+    queriesByBoundary.set(q.boundary_path, set);
+  }
 
-  // breadcrumbs
-  { path: "shell.content.breadcrumbs", name: "breadcrumbs", type: "boundary", boundaryPath: "shell.content.breadcrumbs", expectedFetchMs: 55 },
-  { path: "shell.content.breadcrumbs.query", name: "getBreadcrumbs", type: "query", boundaryPath: "shell.content.breadcrumbs", queryName: "getBreadcrumbs" },
-  { path: "shell.content.breadcrumbs.query.op1", name: "category.tree", type: "subgraph-op", boundaryPath: "shell.content.breadcrumbs", queryName: "getBreadcrumbs", opName: "category.tree", subgraphName: "cms-subgraph" },
+  // 3. Collect unique subgraph ops per (boundary, query)
+  const opsByBoundaryQuery = new Map<string, Map<string, string>>();
+  for (const op of subgraphOps) {
+    const key = `${op.boundary_path}:${op.queryName}`;
+    const opsMap = opsByBoundaryQuery.get(key) ?? new Map();
+    opsMap.set(op.operationName, op.subgraphName);
+    opsByBoundaryQuery.set(key, opsMap);
+  }
 
-  // hero
-  { path: "shell.content.main.hero", name: "hero", type: "boundary", boundaryPath: "shell.content.main.hero", lcpCritical: true, expectedFetchMs: 35 },
-  { path: "shell.content.main.hero.query", name: "getHeroImage", type: "query", boundaryPath: "shell.content.main.hero", queryName: "getHeroImage" },
-  { path: "shell.content.main.hero.query.op1", name: "media.heroImage", type: "subgraph-op", boundaryPath: "shell.content.main.hero", queryName: "getHeroImage", opName: "media.heroImage", subgraphName: "media-subgraph" },
+  // 4. Build the tree
+  const items: TreeItem[] = [];
 
-  // thumbnails (own query, no cache)
-  { path: "shell.content.main.thumbnails", name: "thumbnails", type: "boundary", boundaryPath: "shell.content.main.thumbnails", expectedFetchMs: 50 },
-  { path: "shell.content.main.thumbnails.query", name: "getThumbnails", type: "query", boundaryPath: "shell.content.main.thumbnails", queryName: "getThumbnails" },
-  { path: "shell.content.main.thumbnails.query.op1", name: "media.thumbnails", type: "subgraph-op", boundaryPath: "shell.content.main.thumbnails", queryName: "getThumbnails", opName: "media.thumbnails", subgraphName: "media-subgraph" },
+  for (const boundaryPath of boundaryPaths) {
+    const name = boundaryPath.split(".").pop()!;
 
-  // pdp (getProductInfo only — product.core + product.bullets)
-  { path: "shell.content.main.pdp", name: "pdp", type: "boundary", boundaryPath: "shell.content.main.pdp", expectedFetchMs: 45 },
-  { path: "shell.content.main.pdp.query", name: "getProductInfo", type: "query", boundaryPath: "shell.content.main.pdp", queryName: "getProductInfo" },
-  { path: "shell.content.main.pdp.query.op1", name: "product.core", type: "subgraph-op", boundaryPath: "shell.content.main.pdp", queryName: "getProductInfo", opName: "product.core", subgraphName: "product-subgraph" },
-  { path: "shell.content.main.pdp.query.op2", name: "product.bullets", type: "subgraph-op", boundaryPath: "shell.content.main.pdp", queryName: "getProductInfo", opName: "product.bullets", subgraphName: "product-subgraph" },
+    items.push({
+      path: boundaryPath,
+      name,
+      type: "boundary",
+      boundaryPath,
+      lcpCritical: lcpByPath.get(boundaryPath) ?? false,
+    });
 
-  // pricing (getProductPricing — intentionally slow, own Suspense boundary)
-  { path: "shell.content.main.pricing", name: "pricing", type: "boundary", boundaryPath: "shell.content.main.pricing", expectedFetchMs: 450 },
-  { path: "shell.content.main.pricing.query", name: "getProductPricing", type: "query", boundaryPath: "shell.content.main.pricing", queryName: "getProductPricing" },
-  { path: "shell.content.main.pricing.query.op1", name: "pricing.current", type: "subgraph-op", boundaryPath: "shell.content.main.pricing", queryName: "getProductPricing", opName: "pricing.current", subgraphName: "pricing-subgraph" },
-  { path: "shell.content.main.pricing.query.op2", name: "inventory.availability", type: "subgraph-op", boundaryPath: "shell.content.main.pricing", queryName: "getProductPricing", opName: "inventory.availability", subgraphName: "inventory-subgraph" },
-  { path: "shell.content.main.pricing.query.op3", name: "reviews.summary", type: "subgraph-op", boundaryPath: "shell.content.main.pricing", queryName: "getProductPricing", opName: "reviews.summary", subgraphName: "reviews-subgraph" },
+    const queryNames = queriesByBoundary.get(boundaryPath);
+    if (!queryNames) continue;
 
-  // bullets (getProductInfo cache hit)
-  { path: "shell.content.main.bullets", name: "bullets", type: "boundary", boundaryPath: "shell.content.main.bullets", expectedFetchMs: 0 },
-  { path: "shell.content.main.bullets.query", name: "getProductInfo", type: "query", boundaryPath: "shell.content.main.bullets", queryName: "getProductInfo" },
+    let queryIdx = 0;
+    for (const queryName of queryNames) {
+      const queryPath = `${boundaryPath}.query${queryIdx > 0 ? queryIdx : ""}`;
+      items.push({
+        path: queryPath,
+        name: queryName,
+        type: "query",
+        boundaryPath,
+        queryName,
+      });
 
-  // options (getProductInfo cache hit)
-  { path: "shell.content.main.options", name: "options", type: "boundary", boundaryPath: "shell.content.main.options", expectedFetchMs: 0 },
-  { path: "shell.content.main.options.query", name: "getProductInfo", type: "query", boundaryPath: "shell.content.main.options", queryName: "getProductInfo" },
+      const opsKey = `${boundaryPath}:${queryName}`;
+      const ops = opsByBoundaryQuery.get(opsKey);
+      if (ops) {
+        let opIdx = 0;
+        for (const [opName, subgraphName] of ops) {
+          items.push({
+            path: `${queryPath}.op${opIdx > 0 ? opIdx : ""}`,
+            name: opName,
+            type: "subgraph-op",
+            boundaryPath,
+            queryName,
+            opName,
+            subgraphName,
+          });
+          opIdx++;
+        }
+      }
+      queryIdx++;
+    }
+  }
 
-  // carousels
-  { path: "shell.content.carousels", name: "carousels", type: "boundary", boundaryPath: "shell.content.carousels", expectedFetchMs: 180 },
-  { path: "shell.content.carousels.query", name: "getRecommendations", type: "query", boundaryPath: "shell.content.carousels", queryName: "getRecommendations" },
-  { path: "shell.content.carousels.query.op1", name: "reco.personalized", type: "subgraph-op", boundaryPath: "shell.content.carousels", queryName: "getRecommendations", opName: "reco.personalized", subgraphName: "reco-subgraph" },
-  { path: "shell.content.carousels.query.op2", name: "product.cards", type: "subgraph-op", boundaryPath: "shell.content.carousels", queryName: "getRecommendations", opName: "product.cards", subgraphName: "product-subgraph" },
-  { path: "shell.content.carousels.query.op3", name: "pricing.batch", type: "subgraph-op", boundaryPath: "shell.content.carousels", queryName: "getRecommendations", opName: "pricing.batch", subgraphName: "pricing-subgraph" },
+  return items;
+}
 
-  // reviews
-  { path: "shell.content.reviews", name: "reviews", type: "boundary", boundaryPath: "shell.content.reviews", expectedFetchMs: 350 },
-  { path: "shell.content.reviews.query", name: "getReviews", type: "query", boundaryPath: "shell.content.reviews", queryName: "getReviews" },
-  { path: "shell.content.reviews.query.op1", name: "reviews.list", type: "subgraph-op", boundaryPath: "shell.content.reviews", queryName: "getReviews", opName: "reviews.list", subgraphName: "reviews-subgraph" },
-
-  // footer
-  { path: "shell.footer", name: "footer", type: "boundary", boundaryPath: "shell.footer", expectedFetchMs: 40 },
-  { path: "shell.footer.query", name: "getFooter", type: "query", boundaryPath: "shell.footer", queryName: "getFooter" },
-  { path: "shell.footer.query.op1", name: "cms.footer", type: "subgraph-op", boundaryPath: "shell.footer", queryName: "getFooter", opName: "cms.footer", subgraphName: "cms-subgraph" },
-];
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
 // Boundary-level SLOs
 const BOUNDARY_SLOS: Record<string, number> = {
@@ -126,16 +157,6 @@ const BOUNDARY_SLOS: Record<string, number> = {
   "shell.content.reviews": 550,
   "shell.footer": 100,
 };
-
-// All boundary paths for collapse/expand
-const ALL_BOUNDARY_PATHS = TREE_STRUCTURE
-  .filter((t) => t.type === "boundary")
-  .map((t) => t.boundaryPath);
-
-// Map each non-boundary item to its parent boundary path
-function getParentBoundaryPath(item: TreeItem): string {
-  return item.boundaryPath;
-}
 
 interface TreeNode {
   name: string;
@@ -161,7 +182,23 @@ function getDepth(item: TreeItem): number {
 }
 
 export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Props) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(ALL_BOUNDARY_PATHS));
+  // Build tree structure dynamically from recorded metrics
+  const treeStructure = useMemo(
+    () => buildTreeFromMetrics(boundaries, queries, subgraphOps),
+    [boundaries, queries, subgraphOps],
+  );
+
+  const allBoundaryPaths = useMemo(
+    () => treeStructure.filter((t) => t.type === "boundary").map((t) => t.boundaryPath),
+    [treeStructure],
+  );
+
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Auto-expand all boundaries when tree structure changes
+  useMemo(() => {
+    setExpanded(new Set(allBoundaryPaths));
+  }, [allBoundaryPaths]);
 
   const toggleExpand = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -172,7 +209,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
     });
   }, []);
 
-  const expandAll = useCallback(() => setExpanded(new Set(ALL_BOUNDARY_PATHS)), []);
+  const expandAll = useCallback(() => setExpanded(new Set(allBoundaryPaths)), [allBoundaryPaths]);
   const collapseAll = useCallback(() => setExpanded(new Set()), []);
 
   const treeNodes = useMemo(() => {
@@ -202,9 +239,9 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
       opByKey.set(key, list);
     }
 
-    // Precompute which boundaries have children in TREE_STRUCTURE
+    // Precompute which boundaries have children in the dynamic tree
     const boundaryHasChildren = new Set<string>();
-    for (const item of TREE_STRUCTURE) {
+    for (const item of treeStructure) {
       if (item.type !== "boundary") {
         boundaryHasChildren.add(item.boundaryPath);
       }
@@ -212,7 +249,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
 
     const nodes: TreeNode[] = [];
 
-    for (const item of TREE_STRUCTURE) {
+    for (const item of treeStructure) {
       const depth = getDepth(item);
 
       if (item.type === "boundary") {
@@ -234,7 +271,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
           blockedPctl: 0,
           totalPctl: percentile(durations, pctl),
           slo: BOUNDARY_SLOS[item.boundaryPath] ?? 500,
-          lcpCritical: item.lcpCritical ?? metrics.some((m) => m.is_lcp_critical),
+          lcpCritical: item.lcpCritical ?? false,
           cached: false,
           hasChildren: boundaryHasChildren.has(item.boundaryPath),
         });
@@ -292,26 +329,18 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
       }
     }
 
-    // Thread simulation for blocked_ms
-    const expectedFetchByPath = new Map<string, number>();
-    for (const item of TREE_STRUCTURE) {
-      if (item.type === "boundary" && item.expectedFetchMs !== undefined) {
-        expectedFetchByPath.set(item.boundaryPath, item.expectedFetchMs);
-      }
-    }
-
+    // Thread simulation for blocked_ms — uses real percentile fetch durations
     const boundaryNodes = nodes.filter(
       (n) => n.type === "boundary" && n.renderCostPctl > 0
     );
     const sorted = [...boundaryNodes].sort((a, b) => {
-      const aEnd = a.wallStartPctl + (expectedFetchByPath.get(a.boundaryPath) ?? a.fetchPctl);
-      const bEnd = b.wallStartPctl + (expectedFetchByPath.get(b.boundaryPath) ?? b.fetchPctl);
+      const aEnd = a.wallStartPctl + a.fetchPctl;
+      const bEnd = b.wallStartPctl + b.fetchPctl;
       return aEnd - bEnd;
     });
     let threadCursor = 0;
     for (const bn of sorted) {
-      const expectedFetch = expectedFetchByPath.get(bn.boundaryPath) ?? bn.fetchPctl;
-      const fetchEnd = bn.wallStartPctl + expectedFetch;
+      const fetchEnd = bn.wallStartPctl + bn.fetchPctl;
       const renderStart = Math.max(threadCursor, fetchEnd);
       const blocked = renderStart - fetchEnd;
       const nodeIdx = nodes.findIndex((n) => n.path === bn.path);
@@ -322,7 +351,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
     }
 
     return nodes;
-  }, [boundaries, queries, subgraphOps, pctl]);
+  }, [treeStructure, boundaries, queries, subgraphOps, pctl]);
 
   // Filter visible nodes based on expanded state
   const visibleNodes = useMemo(() => {
