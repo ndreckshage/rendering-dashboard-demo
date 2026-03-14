@@ -32,7 +32,7 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    refreshMetrics();
+    clientMetricsStore.seedIfFirstVisit().then(() => refreshMetrics());
   }, [refreshMetrics]);
 
   function clearMetrics() {
