@@ -19,26 +19,16 @@ const CSR_TIMEOUT_MS = 3000;
 
 /**
  * CSR query schedule — defines which queries fire and when (relative to hydration).
- * Stagger pattern: 3 immediate, 1 slightly delayed (depends on experiments), 1 deferred.
+ * Stagger pattern: 2 immediate (cart + favorites), 1 deferred (Q&A).
  */
 export const CSR_QUERY_SCHEDULE: {
   queryName: string;
   boundaryPath: string;
   delayMs: number;
 }[] = [
-  { queryName: "getUserCart", boundaryPath: "csr.cart", delayMs: 0 },
-  { queryName: "getUserWishlist", boundaryPath: "csr.wishlist", delayMs: 0 },
-  {
-    queryName: "getClientExperiments",
-    boundaryPath: "csr.experiments",
-    delayMs: 0,
-  },
-  {
-    queryName: "getPersonalizedSlots",
-    boundaryPath: "csr.personalized",
-    delayMs: 50,
-  },
-  { queryName: "getReviewsQA", boundaryPath: "csr.reviewsQA", delayMs: 200 },
+  { queryName: "getUserCart", boundaryPath: "csr.Cart", delayMs: 0 },
+  { queryName: "getUserFavorites", boundaryPath: "csr.Favorites", delayMs: 0 },
+  { queryName: "getReviewsQA", boundaryPath: "csr.ReviewsQA", delayMs: 200 },
 ];
 
 /**

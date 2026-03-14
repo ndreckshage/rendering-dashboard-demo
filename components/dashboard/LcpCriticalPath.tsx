@@ -40,11 +40,9 @@ const BOUNDARY_COLORS: Record<string, string> = {
   Reviews: "rgb(34, 197, 94)",
   Footer: "rgb(100, 116, 139)",
   // CSR boundaries
-  cart: "rgb(168, 85, 247)",
-  wishlist: "rgb(168, 85, 247)",
-  experiments: "rgb(99, 102, 241)",
-  personalized: "rgb(236, 72, 153)",
-  reviewsQA: "rgb(34, 197, 94)",
+  Cart: "rgb(168, 85, 247)",
+  Favorites: "rgb(168, 85, 247)",
+  ReviewsQA: "rgb(34, 197, 94)",
 };
 
 function median(values: number[]): number {

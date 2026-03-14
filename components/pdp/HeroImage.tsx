@@ -1,10 +1,18 @@
+import type { ReactNode } from "react";
+
 /**
  * LCP hero image — rendered inside a Suspense boundary that fetches
  * product media data (getProductMedia query).
  */
-export function HeroImage({ imageUrl }: { imageUrl: string }) {
+export function HeroImage({
+  imageUrl,
+  favoriteSlot,
+}: {
+  imageUrl: string;
+  favoriteSlot?: ReactNode;
+}) {
   return (
-    <div className="px-6 py-6">
+    <div className="px-6 py-6 relative">
       <img
         src={imageUrl}
         alt="Nikon D7000 Camera"
@@ -13,6 +21,7 @@ export function HeroImage({ imageUrl }: { imageUrl: string }) {
         className="bg-zinc-800 rounded-xl aspect-square max-w-lg w-full object-cover"
         fetchPriority="high"
       />
+      {favoriteSlot}
     </div>
   );
 }

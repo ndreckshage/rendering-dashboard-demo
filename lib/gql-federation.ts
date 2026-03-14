@@ -57,13 +57,7 @@ export const SUBGRAPH_OPERATIONS: Record<string, SubgraphOperationDef> = {
   "category.tree": { subgraph: "cms-subgraph", baseMs: 55, sloMs: 80 },
   // Client-side operations (post-hydration)
   "user.cart": { subgraph: "user-subgraph", baseMs: 80, sloMs: 120 },
-  "user.wishlist": { subgraph: "user-subgraph", baseMs: 60, sloMs: 100 },
-  "ab.clientAssignments": {
-    subgraph: "experimentation-subgraph",
-    baseMs: 40,
-    sloMs: 60,
-  },
-  "personalization.slots": { subgraph: "reco-subgraph", baseMs: 150, sloMs: 200 },
+  "user.favorites": { subgraph: "user-subgraph", baseMs: 60, sloMs: 100 },
   "reviews.qa": { subgraph: "reviews-subgraph", baseMs: 200, sloMs: 300 },
 };
 
@@ -125,17 +119,9 @@ export const GQL_QUERIES: Record<string, GqlQueryDef> = {
     operations: ["user.cart"],
     sloMs: 120,
   },
-  getUserWishlist: {
-    operations: ["user.wishlist"],
+  getUserFavorites: {
+    operations: ["user.favorites"],
     sloMs: 100,
-  },
-  getClientExperiments: {
-    operations: ["ab.clientAssignments"],
-    sloMs: 60,
-  },
-  getPersonalizedSlots: {
-    operations: ["personalization.slots"],
-    sloMs: 200,
   },
   getReviewsQA: {
     operations: ["reviews.qa"],
