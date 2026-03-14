@@ -165,8 +165,6 @@ export const clientMetricsStore = {
     const current = loadFromStorage();
     // Only append if this request exists in stored data
     if (!current.boundaries.some((b) => b.requestId === requestId)) return;
-    // Don't double-append CSR data
-    if (current.queries.some((q) => q.requestId === requestId && q.phase === "csr")) return;
 
     const merged: ClientMetrics = {
       ...current,
