@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { clientMetricsStore } from "@/lib/client-metrics-store";
+import { clientMetricsStore, type LoAFEntry } from "@/lib/client-metrics-store";
+import { simulateCsrQueries } from "@/lib/csr-simulation";
 import type {
   BoundaryMetric,
   FetchMetric,
@@ -18,8 +19,13 @@ interface Props {
   };
 }
 
+/** How long after mount to observe Long Animation Frames (ms) */
+const LOAF_OBSERVE_WINDOW_MS = 5000;
+
 /**
- * Client component that persists server-rendered metrics to localStorage.
+ * Client component that persists server-rendered metrics to localStorage,
+ * runs CSR query simulation, and observes Long Animation Frames during
+ * page initialization.
  *
  * Rendered inside MetricsEmbed's Suspense boundary, so it only mounts
  * after all boundaries have been recorded and the data has streamed in.
@@ -39,6 +45,66 @@ export function MetricsCollector({ metrics }: Props) {
 
     clientMetricsStore.addPageLoad(metrics);
     stored.current = true;
+
+    // --- CSR query simulation ---
+    const requestStartTs =
+      metrics.boundaries[0].timestamp - metrics.boundaries[0].wall_start_ms;
+    const maxSsrEnd = Math.max(
+      ...metrics.boundaries.map(
+        (b) => b.wall_start_ms + b.render_duration_ms,
+      ),
+    );
+    const hydrationMs = maxSsrEnd + 50; // ~50ms hydration overhead
+
+    simulateCsrQueries(requestId, requestStartTs, hydrationMs).then(
+      (csrResult) => {
+        clientMetricsStore.appendCsrMetrics(requestId, csrResult);
+      },
+    );
+
+    // --- Long Animation Frame observer ---
+    if (typeof PerformanceObserver !== "undefined") {
+      try {
+        const loafEntries: LoAFEntry[] = [];
+        const observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            // LoAF entries have scripts attribution
+            const loaf = entry as PerformanceEntry & {
+              blockingDuration?: number;
+              scripts?: ReadonlyArray<{
+                sourceURL?: string;
+                sourceFunctionName?: string;
+                invokerType?: string;
+                duration?: number;
+              }>;
+            };
+            loafEntries.push({
+              startTime: Math.round(loaf.startTime),
+              duration: Math.round(loaf.duration),
+              blockingDuration: Math.round(loaf.blockingDuration ?? 0),
+              scripts: (loaf.scripts ?? []).map((s) => ({
+                sourceURL: s.sourceURL ?? "",
+                sourceFunctionName: s.sourceFunctionName ?? "",
+                invokerType: s.invokerType ?? "",
+                duration: Math.round(s.duration ?? 0),
+              })),
+            });
+          }
+        });
+
+        observer.observe({ type: "long-animation-frame", buffered: true });
+
+        // Stop observing after the initialization window
+        setTimeout(() => {
+          observer.disconnect();
+          if (loafEntries.length > 0) {
+            clientMetricsStore.appendLoafEntries(requestId, loafEntries);
+          }
+        }, LOAF_OBSERVE_WINDOW_MS);
+      } catch {
+        // long-animation-frame not supported in this browser — skip silently
+      }
+    }
   }, [metrics]);
 
   return null;

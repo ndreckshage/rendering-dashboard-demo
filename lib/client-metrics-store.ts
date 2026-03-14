@@ -14,6 +14,19 @@ import type {
   SubgraphOperationMetric,
 } from "./metrics-store";
 
+/** A single Long Animation Frame entry captured during page initialization */
+export interface LoAFEntry {
+  startTime: number;
+  duration: number;
+  blockingDuration: number;
+  scripts: {
+    sourceURL: string;
+    sourceFunctionName: string;
+    invokerType: string;
+    duration: number;
+  }[];
+}
+
 export interface ClientMetrics {
   boundaries: BoundaryMetric[];
   fetches: FetchMetric[];
@@ -22,13 +35,15 @@ export interface ClientMetrics {
   totalPageLoads: number;
   /** Per-request hydration offsets (ms from request start to hydration) */
   hydrationTimes?: Record<string, number>;
+  /** Long Animation Frame entries per requestId */
+  loafEntries?: Record<string, LoAFEntry[]>;
 }
 
 /**
  * Schema version — bump this when the metric shape changes to avoid
  * deserializing stale data from a previous deploy.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const STORAGE_KEY = `suspense-dashboard-metrics-v${SCHEMA_VERSION}`;
 const MAX_PAGE_LOADS = 100;
 
@@ -161,6 +176,21 @@ export const clientMetricsStore = {
       hydrationTimes: {
         ...current.hydrationTimes,
         [requestId]: csrData.hydration_ms,
+      },
+    };
+    saveToStorage(merged);
+  },
+
+  /** Append Long Animation Frame entries for a page load */
+  appendLoafEntries(requestId: string, entries: LoAFEntry[]) {
+    if (entries.length === 0) return;
+    const current = loadFromStorage();
+    if (!current.boundaries.some((b) => b.requestId === requestId)) return;
+    const merged: ClientMetrics = {
+      ...current,
+      loafEntries: {
+        ...current.loafEntries,
+        [requestId]: [...(current.loafEntries?.[requestId] ?? []), ...entries],
       },
     };
     saveToStorage(merged);
