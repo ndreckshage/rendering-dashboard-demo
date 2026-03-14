@@ -403,11 +403,16 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                 );
                 const color = BOUNDARY_COLORS[t.name] ?? "rgb(100, 116, 139)";
 
+                const queryTooltip = t.cached
+                  ? `${t.name} (${t.boundaryPath})\nQuery: ${t.queryName}\nCached (deduped by React cache())`
+                  : `${t.name} (${t.boundaryPath})\nQuery: ${t.queryName}\nWall start: ${t.wallStart}ms\nFetch: ${t.fetchDuration}ms\nRender cost: ${t.renderCost}ms${t.blocked > 0 ? `\nBlocked: ${t.blocked}ms` : ""}\nTotal: ${t.total}ms${t.lcpCritical ? "\nLCP Critical" : ""}`;
+
                 return (
                   <div key={t.boundaryPath} className="relative h-7">
                     {/* Query bar (outer) */}
                     <div
-                      className={`absolute top-0 h-full rounded flex items-center overflow-hidden ${
+                      title={queryTooltip}
+                      className={`absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default ${
                         t.cached
                           ? "opacity-40 border border-dashed border-zinc-600"
                           : ""
@@ -471,10 +476,13 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
               const widthPct = Math.max((block.duration / maxMs) * 100, 1.5);
               const color = BOUNDARY_COLORS[block.name] ?? "rgb(100, 116, 139)";
 
+              const renderTooltip = `${block.name}\nRender start: ${Math.round(block.start)}ms\nRender cost: ${block.duration}ms (sync, blocks thread)${block.lcpCritical ? "\nLCP Critical" : ""}`;
+
               return (
                 <div
                   key={block.name}
-                  className={`absolute top-0 h-full rounded flex items-center overflow-hidden ${
+                  title={renderTooltip}
+                  className={`absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default ${
                     block.lcpCritical ? "ring-1 ring-blue-400" : ""
                   }`}
                   style={{
@@ -564,10 +572,13 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                 const color =
                   BOUNDARY_COLORS[t.name] ?? "rgb(168, 85, 247)";
 
+                const csrTooltip = `${t.name} (${t.boundaryPath})\nQuery: ${t.queryName}\nStarts at: ${Math.round(t.wallStart)}ms (from request start)\nFetch: ${t.fetchDuration}ms\nPhase: CSR (post-hydration)`;
+
                 return (
                   <div key={t.boundaryPath} className="relative h-7">
                     <div
-                      className="absolute top-0 h-full rounded flex items-center overflow-hidden"
+                      title={csrTooltip}
+                      className="absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default"
                       style={{
                         left: `${leftPct}%`,
                         width: `${widthPct}%`,
@@ -673,11 +684,17 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                         .join(", ")
                     : "";
 
+                const loafTooltip = `Long Animation Frame\nStart: ${Math.round(entry.startTime)}ms\nTotal duration: ${Math.round(entry.duration)}ms\nBlocking duration: ${Math.round(entry.blockingDuration)}ms${entry.scripts.length > 0 ? `\n\nScripts:\n${entry.scripts.map((s) => {
+                  const file = s.sourceURL.split("/").pop() ?? s.sourceURL;
+                  const fn = s.sourceFunctionName || "(anonymous)";
+                  return `  ${fn} in ${file} (${s.duration}ms, ${s.invokerType})`;
+                }).join("\n")}` : ""}`;
+
                 return (
-                  <div key={i} className="relative h-7">
+                  <div key={i} className="relative h-7" title={loafTooltip}>
                     {/* Total duration (dimmer) */}
                     <div
-                      className="absolute top-0 h-full rounded overflow-hidden"
+                      className="absolute top-0 h-full rounded overflow-hidden cursor-default"
                       style={{
                         left: `${leftPct}%`,
                         width: `${totalWidthPct}%`,
@@ -687,7 +704,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                     />
                     {/* Blocking duration (bright) */}
                     <div
-                      className="absolute top-0 h-full rounded flex items-center overflow-hidden"
+                      className="absolute top-0 h-full rounded flex items-center overflow-hidden cursor-default"
                       style={{
                         left: `${leftPct}%`,
                         width: `${Math.max(blockingWidthPct, 1)}%`,
