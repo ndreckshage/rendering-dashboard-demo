@@ -230,4 +230,28 @@ export const clientMetricsStore = {
   getPageLoadCount(): number {
     return loadFromStorage().totalPageLoads;
   },
+
+  /**
+   * If localStorage is empty, fetch seed data from /seed-metrics.json
+   * and populate it. Returns true if seeding occurred.
+   */
+  async seedIfEmpty(): Promise<boolean> {
+    if (typeof window === "undefined") return false;
+    const current = loadFromStorage();
+    if (current.totalPageLoads > 0 || current.boundaries.length > 0) return false;
+
+    try {
+      const res = await fetch("/seed-metrics.json");
+      if (!res.ok) return false;
+      const seed = await res.json();
+      if (seed && Array.isArray(seed.boundaries) && seed.boundaries.length > 0) {
+        seed.totalPageLoads = countPageLoads(seed.boundaries);
+        saveToStorage(seed as ClientMetrics);
+        return true;
+      }
+    } catch {
+      // Seed file unavailable — no problem
+    }
+    return false;
+  },
 };
