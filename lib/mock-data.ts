@@ -21,7 +21,7 @@ export function mockNavData() {
     categories: [
       { name: "Electronics", href: "/c/electronics" },
       { name: "Computers", href: "/c/computers" },
-      { name: "Audio", href: "/c/audio" },
+      { name: "Cameras", href: "/c/cameras" },
       { name: "Accessories", href: "/c/accessories" },
     ],
     logo: "ACME Store",
@@ -38,11 +38,11 @@ export function mockSessionConfig() {
 export function mockProductData(sku: string) {
   return {
     sku,
-    name: "Premium Wireless Headphones",
-    brand: "SoundMax",
+    name: "Nikon D7000 Digital Camera",
+    brand: "Nikon",
     heroImageUrl: "/placeholder-hero.svg",
     shortDescription:
-      "Immersive sound with active noise cancellation and 30-hour battery life.",
+      "16.2MP DX-format CMOS sensor with 1080p video and 39-point AF system.",
     rating: 4.6,
     reviewCount: 1247,
   };
@@ -52,27 +52,27 @@ export function mockBreadcrumbs() {
   return [
     { name: "Home", href: "/" },
     { name: "Electronics", href: "/c/electronics" },
-    { name: "Audio", href: "/c/audio" },
-    { name: "Headphones", href: "/c/headphones" },
+    { name: "Cameras", href: "/c/cameras" },
+    { name: "DSLR", href: "/c/dslr" },
   ];
 }
 
 export function mockProductDetails() {
   return {
-    price: 249.99,
-    originalPrice: 349.99,
+    price: 899.99,
+    originalPrice: 1199.99,
     currency: "USD",
     inStock: true,
     variants: [
-      { name: "Midnight Black", value: "black", available: true },
-      { name: "Arctic White", value: "white", available: true },
-      { name: "Navy Blue", value: "blue", available: false },
+      { name: "Body Only", value: "body", available: true },
+      { name: "18-105mm Kit", value: "kit-18-105", available: true },
+      { name: "18-200mm Kit", value: "kit-18-200", available: false },
     ],
     specs: [
-      { label: "Battery Life", value: "30 hours" },
-      { label: "Driver Size", value: "40mm" },
-      { label: "Connectivity", value: "Bluetooth 5.3" },
-      { label: "Weight", value: "250g" },
+      { label: "Sensor", value: "16.2MP DX CMOS" },
+      { label: "ISO Range", value: "100–25600" },
+      { label: "AF Points", value: "39-point" },
+      { label: "Weight", value: "780g" },
     ],
   };
 }
@@ -92,12 +92,12 @@ export function mockCarousels() {
 
 export function mockReviews() {
   const reviewTexts = [
-    "Amazing sound quality! Best headphones I've ever owned.",
-    "Comfortable for long listening sessions. Battery is incredible.",
-    "Good noise cancellation but a bit pricey.",
-    "The build quality is fantastic. Very premium feel.",
-    "Decent headphones but the app could be better.",
-    "Perfect for travel. The ANC is top-notch.",
+    "Incredible image quality. Sharp and vibrant even in low light.",
+    "The autofocus is lightning fast. Perfect for action shots.",
+    "Great build quality — feels solid and weather-sealed.",
+    "Video mode is excellent. 1080p looks fantastic.",
+    "Ergonomics are perfect. Comfortable to shoot all day.",
+    "Best value DSLR in this class. Highly recommend.",
   ];
   return {
     summary: { average: 4.6, total: 1247, distribution: [5, 62, 23, 7, 3] },

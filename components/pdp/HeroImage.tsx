@@ -6,12 +6,14 @@
 export function HeroImage() {
   return (
     <div className="px-6 py-6">
-      <div className="bg-zinc-800 rounded-xl aspect-square max-w-lg flex items-center justify-center">
-        <div className="text-center text-zinc-500">
-          <div className="text-6xl mb-4">🎧</div>
-          <div className="text-sm">Product Image</div>
-        </div>
-      </div>
+      <img
+        src="https://picsum.photos/id/250/800/800"
+        alt="Nikon D7000 Camera"
+        width={800}
+        height={800}
+        className="bg-zinc-800 rounded-xl aspect-square max-w-lg w-full object-cover"
+        fetchPriority="high"
+      />
     </div>
   );
 }
