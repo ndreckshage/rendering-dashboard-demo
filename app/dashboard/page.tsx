@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { BoundaryTreeTable } from "@/components/dashboard/BoundaryTreeTable";
 import { LcpCriticalPath } from "@/components/dashboard/LcpCriticalPath";
 import { SubgraphCallsTab } from "@/components/dashboard/SubgraphCallsTab";
+import { ClientQueriesTab } from "@/components/dashboard/ClientQueriesTab";
 import { LoadGenerator } from "@/components/dashboard/LoadGenerator";
 import { clientMetricsStore, type ClientMetrics } from "@/lib/client-metrics-store";
 
@@ -11,7 +12,7 @@ const PERCENTILE_OPTIONS = [50, 75, 90, 95, 99] as const;
 
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<ClientMetrics | null>(null);
-  const [activeTab, setActiveTab] = useState<"tree" | "lcp" | "subgraphs">("tree");
+  const [activeTab, setActiveTab] = useState<"tree" | "lcp" | "subgraphs" | "client">("tree");
   const [loading, setLoading] = useState(true);
   const [pctl, setPctl] = useState<number>(99);
 
@@ -84,6 +85,16 @@ export default function DashboardPage() {
             >
               Subgraph Calls
             </button>
+            <button
+              onClick={() => setActiveTab("client")}
+              className={`px-4 py-2 text-sm transition-colors border-b-2 -mb-px ${
+                activeTab === "client"
+                  ? "border-purple-500 text-white"
+                  : "border-transparent text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Client Queries
+            </button>
           </div>
           <div className="flex items-center gap-2 pb-1">
             <span className="text-xs text-zinc-500">Percentile:</span>
@@ -125,6 +136,13 @@ export default function DashboardPage() {
               subgraphOps={metrics?.subgraphOps ?? []}
               pctl={pctl}
             />
+          ) : activeTab === "client" ? (
+            <ClientQueriesTab
+              queries={metrics?.queries ?? []}
+              subgraphOps={metrics?.subgraphOps ?? []}
+              pctl={pctl}
+              hydrationTimes={metrics?.hydrationTimes}
+            />
           ) : activeTab === "subgraphs" ? (
             <SubgraphCallsTab
               queries={metrics?.queries ?? []}
@@ -136,6 +154,7 @@ export default function DashboardPage() {
               boundaries={metrics?.boundaries ?? []}
               queries={metrics?.queries ?? []}
               pctl={pctl}
+              hydrationTimes={metrics?.hydrationTimes}
             />
           )}
         </div>

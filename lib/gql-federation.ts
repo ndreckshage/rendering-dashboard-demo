@@ -17,6 +17,7 @@ export const SUBGRAPHS = {
   "reco-subgraph": { color: "rgb(236, 72, 153)" }, // pink
   "experimentation-subgraph": { color: "rgb(99, 102, 241)" }, // indigo
   "media-subgraph": { color: "rgb(6, 182, 212)" }, // cyan
+  "user-subgraph": { color: "rgb(168, 85, 247)" }, // purple
 } as const;
 
 export type SubgraphName = keyof typeof SUBGRAPHS;
@@ -54,6 +55,16 @@ export const SUBGRAPH_OPERATIONS: Record<string, SubgraphOperationDef> = {
   "media.heroImage": { subgraph: "media-subgraph", baseMs: 35, sloMs: 50 },
   "media.thumbnails": { subgraph: "media-subgraph", baseMs: 50, sloMs: 70 },
   "category.tree": { subgraph: "cms-subgraph", baseMs: 55, sloMs: 80 },
+  // Client-side operations (post-hydration)
+  "user.cart": { subgraph: "user-subgraph", baseMs: 80, sloMs: 120 },
+  "user.wishlist": { subgraph: "user-subgraph", baseMs: 60, sloMs: 100 },
+  "ab.clientAssignments": {
+    subgraph: "experimentation-subgraph",
+    baseMs: 40,
+    sloMs: 60,
+  },
+  "personalization.slots": { subgraph: "reco-subgraph", baseMs: 150, sloMs: 200 },
+  "reviews.qa": { subgraph: "reviews-subgraph", baseMs: 200, sloMs: 300 },
 };
 
 // --- GQL query definitions ---
@@ -108,5 +119,26 @@ export const GQL_QUERIES: Record<string, GqlQueryDef> = {
   getFooter: {
     operations: ["cms.footer"],
     sloMs: 80,
+  },
+  // Client-side queries (post-hydration)
+  getUserCart: {
+    operations: ["user.cart"],
+    sloMs: 120,
+  },
+  getUserWishlist: {
+    operations: ["user.wishlist"],
+    sloMs: 100,
+  },
+  getClientExperiments: {
+    operations: ["ab.clientAssignments"],
+    sloMs: 60,
+  },
+  getPersonalizedSlots: {
+    operations: ["personalization.slots"],
+    sloMs: 200,
+  },
+  getReviewsQA: {
+    operations: ["reviews.qa"],
+    sloMs: 300,
   },
 };

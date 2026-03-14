@@ -12,6 +12,8 @@ export interface BoundaryMetric {
   /** Time this boundary waited for the thread after its fetch resolved (>0 means another boundary's render was blocking) */
   blocked_ms?: number;
   is_lcp_critical: boolean;
+  /** "ssr" (default/undefined) or "csr" for client-side queries */
+  phase?: "ssr" | "csr";
 }
 
 export interface FetchMetric {
@@ -33,6 +35,8 @@ export interface SubgraphOperationMetric {
   subgraphName: string;
   duration_ms: number;
   cached: boolean;
+  /** "ssr" (default/undefined) or "csr" for client-side queries */
+  phase?: "ssr" | "csr";
 }
 
 export interface QueryMetric {
@@ -45,6 +49,8 @@ export interface QueryMetric {
   subgraphOps: string[];
   cachedOps: string[];
   fullyCached: boolean;
+  /** "ssr" (default/undefined) or "csr" for client-side queries */
+  phase?: "ssr" | "csr";
 }
 
 const MAX_PAGE_LOADS = 200;

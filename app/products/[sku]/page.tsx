@@ -1,5 +1,6 @@
 import { TracedBoundary } from "@/components/TracedBoundary";
 import { MetricsEmbed } from "@/components/MetricsEmbed";
+import { ClientQueryOrchestrator } from "@/components/ClientQueryOrchestrator";
 import { executeGqlQuery } from "@/lib/gql-query";
 import { getRequestContext } from "@/lib/boundary-context";
 import { metricsStore } from "@/lib/metrics-store";
@@ -403,6 +404,12 @@ export default async function PDPPage({
       {/* Embed metrics in HTML — streams in after all boundaries complete.
           Includes MetricsCollector client component that persists to localStorage. */}
       <MetricsEmbed requestId={ctx.requestId} />
+
+      {/* Client-side query simulation — fires post-hydration CSR queries */}
+      <ClientQueryOrchestrator
+        requestId={ctx.requestId}
+        requestStartTs={ctx.requestStartTs}
+      />
     </>
   );
 }
