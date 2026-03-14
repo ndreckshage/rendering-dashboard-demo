@@ -135,54 +135,52 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
     [queries],
   );
 
-  // Compute median hydration time across page loads
+  // Compute hydration time across page loads at selected percentile
   const hydrationMs = useMemo(() => {
     if (!hydrationTimes) return 0;
     const values = Object.values(hydrationTimes);
     if (values.length === 0) return 0;
-    return median(values);
-  }, [hydrationTimes]);
+    return percentile(values, pctl);
+  }, [hydrationTimes, pctl]);
 
-  // Aggregate LoAF entries across page loads
+  // Pick a representative page load's LoAF entries at the selected percentile
+  // We rank page loads by total blocking time and pick the one at pctl
   const aggregatedLoaf = useMemo(() => {
     if (!loafEntries) return [];
-    const allEntries = Object.values(loafEntries).flat();
-    if (allEntries.length === 0) return [];
+    const pageLoads = Object.entries(loafEntries).filter(([, entries]) => entries.length > 0);
+    if (pageLoads.length === 0) return [];
 
-    // Group by rounded startTime (within 50ms buckets) and take median durations
-    const buckets = new Map<number, LoAFEntry[]>();
-    for (const entry of allEntries) {
-      const bucket = Math.round(entry.startTime / 50) * 50;
-      const list = buckets.get(bucket) ?? [];
-      list.push(entry);
-      buckets.set(bucket, list);
-    }
+    // Rank page loads by total blocking time, pick the one at the selected percentile
+    const ranked = pageLoads
+      .map(([id, entries]) => ({
+        id,
+        entries,
+        totalBlocking: entries.reduce((sum, e) => sum + e.blockingDuration, 0),
+      }))
+      .sort((a, b) => a.totalBlocking - b.totalBlocking);
 
-    return [...buckets.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([startTime, entries]) => ({
-        startTime,
-        duration: median(entries.map((e) => e.duration)),
-        blockingDuration: median(entries.map((e) => e.blockingDuration)),
-        scripts: entries[0].scripts, // representative scripts from first entry
-      }));
-  }, [loafEntries]);
+    const idx = Math.min(
+      Math.ceil((pctl / 100) * ranked.length) - 1,
+      ranked.length - 1,
+    );
+    return ranked[Math.max(0, idx)].entries;
+  }, [loafEntries, pctl]);
 
-  // Aggregate navigation timing across page loads
+  // Aggregate navigation timing across page loads at selected percentile
   const navTiming = useMemo(() => {
     if (!navigationTimings) return null;
     const values = Object.values(navigationTimings);
     if (values.length === 0) return null;
     return {
-      domInteractive: median(values.map((t) => t.domInteractive)),
-      domContentLoaded: median(values.map((t) => t.domContentLoaded)),
-      loadEvent: median(values.map((t) => t.loadEvent)),
-      tbt: median(values.map((t) => t.tbt)),
-      loafCount: median(values.map((t) => t.loafCount)),
+      domInteractive: percentile(values.map((t) => t.domInteractive), pctl),
+      domContentLoaded: percentile(values.map((t) => t.domContentLoaded), pctl),
+      loadEvent: percentile(values.map((t) => t.loadEvent), pctl),
+      tbt: percentile(values.map((t) => t.tbt), pctl),
+      loafCount: percentile(values.map((t) => t.loafCount), pctl),
     };
-  }, [navigationTimings]);
+  }, [navigationTimings, pctl]);
 
-  const { timings, maxMs, lcpDataReady, lcpRendered, lcpBlocked, shellEnd } =
+  const { timings, lcpDataReady, lcpRendered, lcpBlocked, shellEnd } =
     useMemo(() => {
       if (ssrBoundaries.length === 0) {
         return {
@@ -300,33 +298,14 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
         : 0;
       const lcpBlocked = lcpBoundary?.blocked ?? 0;
 
-      const allEnds = timings.map((t) => t.wallStart + t.total);
-      // Include CSR query ends if present, capped at hydration + 3s
-      const csrEnds = csrBoundaries.map(
-        (b) => b.wall_start_ms + (b.fetch_duration_ms ?? b.render_duration_ms),
-      );
-      const csrMaxRaw = csrEnds.length > 0 ? Math.max(...csrEnds) : 0;
-      const csrMax =
-        hydrationMs > 0
-          ? Math.min(csrMaxRaw, hydrationMs + 3000)
-          : csrMaxRaw;
-
-      // Include LoAF ends in max calculation
-      const loafEnds = aggregatedLoaf.map((e) => e.startTime + e.duration);
-      const loafMax = loafEnds.length > 0 ? Math.max(...loafEnds) : 0;
-
-      const totalMs = Math.max(...allEnds, lcpRendered, csrMax, loafMax, 1);
-      const maxMs = Math.ceil(totalMs * 1.15);
-
       return {
         timings,
-        maxMs,
         lcpDataReady,
         lcpRendered,
         lcpBlocked,
         shellEnd,
       };
-    }, [ssrBoundaries, ssrQueries, csrBoundaries, hydrationMs, aggregatedLoaf, pctl]);
+    }, [ssrBoundaries, ssrQueries, pctl]);
 
   // Compute CSR query timings for visualization
   const csrTimings = useMemo(() => {
@@ -378,6 +357,19 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
       ...csrTimings.map((t) => t.wallStart + t.fetchDuration),
     );
   }, [csrTimings]);
+
+  // Compute x-axis scale from all percentile-based values
+  const maxMs = useMemo(() => {
+    if (timings.length === 0) return 1;
+    const ssrEnds = timings.map((t) => t.wallStart + t.total);
+    const csrMax = hydrationMs > 0
+      ? Math.min(csrInitComplete, hydrationMs + 3000)
+      : csrInitComplete;
+    const loafEnds = aggregatedLoaf.map((e) => e.startTime + e.duration);
+    const loafMax = loafEnds.length > 0 ? Math.max(...loafEnds) : 0;
+    const totalMs = Math.max(...ssrEnds, lcpRendered, csrMax, loafMax, 1);
+    return Math.ceil(totalMs * 1.15);
+  }, [timings, lcpRendered, csrInitComplete, hydrationMs, aggregatedLoaf]);
 
   if (timings.length === 0) {
     return (

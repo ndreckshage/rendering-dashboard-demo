@@ -131,6 +131,19 @@ function trimMetrics(metrics: ClientMetrics): ClientMetrics {
   const boundaries = metrics.boundaries.filter(
     (m) => !toRemove.has(m.requestId),
   );
+
+  // Filter keyed-by-requestId maps, preserving entries for surviving page loads
+  const filterByRequestId = <T,>(
+    map: Record<string, T> | undefined,
+  ): Record<string, T> | undefined => {
+    if (!map) return undefined;
+    const filtered: Record<string, T> = {};
+    for (const [id, value] of Object.entries(map)) {
+      if (!toRemove.has(id)) filtered[id] = value;
+    }
+    return Object.keys(filtered).length > 0 ? filtered : undefined;
+  };
+
   return {
     boundaries,
     fetches: metrics.fetches.filter((m) => !toRemove.has(m.requestId)),
@@ -139,6 +152,9 @@ function trimMetrics(metrics: ClientMetrics): ClientMetrics {
       (m) => !toRemove.has(m.requestId),
     ),
     totalPageLoads: countPageLoads(boundaries),
+    loafEntries: filterByRequestId(metrics.loafEntries),
+    navigationTimings: filterByRequestId(metrics.navigationTimings),
+    hydrationTimes: filterByRequestId(metrics.hydrationTimes),
   };
 }
 
@@ -156,6 +172,7 @@ export const clientMetricsStore = {
   }) {
     const current = loadFromStorage();
     const merged: ClientMetrics = {
+      ...current,
       boundaries: [...current.boundaries, ...page.boundaries],
       fetches: [...current.fetches, ...page.fetches],
       queries: [...current.queries, ...page.queries],
