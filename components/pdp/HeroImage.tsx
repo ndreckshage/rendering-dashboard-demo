@@ -12,16 +12,18 @@ export function HeroImage({
   favoriteSlot?: ReactNode;
 }) {
   return (
-    <div className="px-6 py-6 relative">
-      <img
-        src={imageUrl}
-        alt="Nikon D7000 Camera"
-        width={800}
-        height={800}
-        className="bg-zinc-800 rounded-xl aspect-square max-w-lg w-full object-cover"
-        fetchPriority="high"
-      />
-      {favoriteSlot}
+    <div className="px-6 py-6">
+      <div className="relative max-w-lg w-full">
+        <img
+          src={imageUrl}
+          alt="Nikon D7000 Camera"
+          width={800}
+          height={800}
+          className="bg-zinc-800 rounded-xl aspect-square w-full object-cover"
+          fetchPriority="high"
+        />
+        {favoriteSlot}
+      </div>
     </div>
   );
 }
