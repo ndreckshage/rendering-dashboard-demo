@@ -45,55 +45,12 @@ const BOUNDARY_COLORS: Record<string, string> = {
   footer: "rgb(100, 116, 139)",
 };
 
-// Expected fetch latencies for thread simulation
-const EXPECTED_FETCH_MS: Record<string, number> = {
-  shell: 30,
-  "shell.nav": 90,
-  "shell.content": 60,
-  "shell.content.breadcrumbs": 55,
-  "shell.content.main.hero": 35,
-  "shell.content.main.thumbnails": 50,
-  "shell.content.main.pdp": 45,
-  "shell.content.main.pricing": 450,
-  "shell.content.main.bullets": 0,
-  "shell.content.main.options": 0,
-  "shell.content.carousels": 180,
-  "shell.content.reviews": 350,
-  "shell.footer": 40,
-};
-
-// Mapping from boundary path to query name
-const BOUNDARY_QUERY: Record<string, string> = {
-  shell: "getExperimentContext",
-  "shell.nav": "getNavigation",
-  "shell.content": "getContentLayout",
-  "shell.content.breadcrumbs": "getBreadcrumbs",
-  "shell.content.main.hero": "getHeroImage",
-  "shell.content.main.thumbnails": "getThumbnails",
-  "shell.content.main.pdp": "getProductInfo",
-  "shell.content.main.pricing": "getProductPricing",
-  "shell.content.main.bullets": "getProductInfo",
-  "shell.content.main.options": "getProductInfo",
-  "shell.content.carousels": "getRecommendations",
-  "shell.content.reviews": "getReviews",
-  "shell.footer": "getFooter",
-};
-
-const BOUNDARY_ORDER = [
-  "shell",
-  "shell.nav",
-  "shell.content",
-  "shell.content.breadcrumbs",
-  "shell.content.main.hero",
-  "shell.content.main.thumbnails",
-  "shell.content.main.pdp",
-  "shell.content.main.pricing",
-  "shell.content.main.bullets",
-  "shell.content.main.options",
-  "shell.content.carousels",
-  "shell.content.reviews",
-  "shell.footer",
-];
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
 export function LcpCriticalPath({ boundaries, queries, pctl }: Props) {
   const { timings, maxMs, lcpDataReady, lcpRendered, lcpBlocked, shellEnd } =
@@ -116,35 +73,47 @@ export function LcpCriticalPath({ boundaries, queries, pctl }: Props) {
         byPath.set(b.boundary_path, list);
       }
 
-      // Group queries by boundary_path:queryName
+      // Group queries by boundary_path — pick first queryName per boundary
+      const queryNameByPath = new Map<string, string>();
       const queryByKey = new Map<string, QueryMetric[]>();
       for (const q of queries) {
+        if (!queryNameByPath.has(q.boundary_path)) {
+          queryNameByPath.set(q.boundary_path, q.queryName);
+        }
         const key = `${q.boundary_path}:${q.queryName}`;
         const list = queryByKey.get(key) ?? [];
         list.push(q);
         queryByKey.set(key, list);
       }
 
+      // Order boundaries by median wall_start_ms
+      const boundaryOrder = [...byPath.keys()].sort((a, b) => {
+        const aMedian = median(byPath.get(a)!.map((m) => m.wall_start_ms));
+        const bMedian = median(byPath.get(b)!.map((m) => m.wall_start_ms));
+        return aMedian - bMedian;
+      });
+
       const timings: BoundaryTiming[] = [];
 
-      for (const path of BOUNDARY_ORDER) {
-        const metrics = byPath.get(path) ?? [];
-        if (metrics.length === 0) continue;
-
+      for (const path of boundaryOrder) {
+        const metrics = byPath.get(path)!;
         const name = path.split(".").pop()!;
         const wallStart = percentile(
           metrics.map((m) => m.wall_start_ms),
           pctl,
         );
-        const expectedFetch = EXPECTED_FETCH_MS[path] ?? 0;
-        const queryName = BOUNDARY_QUERY[path] ?? "";
+        const queryName = queryNameByPath.get(path) ?? "";
 
-        // Get query metrics
+        // Use real recorded fetch durations
+        const fetchDurations = metrics.map((m) => m.fetch_duration_ms ?? m.render_duration_ms);
+        const realFetch = percentile(fetchDurations, pctl);
+
+        // Get query metrics for cache detection
         const qKey = `${path}:${queryName}`;
         const qMetrics = queryByKey.get(qKey) ?? [];
         const isCached =
           qMetrics.length > 0 && qMetrics.every((m) => m.fullyCached);
-        const fetchDuration = isCached ? 0 : expectedFetch;
+        const fetchDuration = isCached ? 0 : realFetch;
 
         timings.push({
           name,
