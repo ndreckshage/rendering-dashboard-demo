@@ -12,6 +12,10 @@
   --font-mono: var(--font-geist-mono);
 }
 
+button, a, [role="button"], select {
+  cursor: pointer;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
