@@ -1,5 +1,7 @@
 import { TracedBoundary } from "@/components/TracedBoundary";
 import { tracedFetch } from "@/lib/traced-fetch";
+import { getRequestContext } from "@/lib/boundary-context";
+import { metricsStore } from "@/lib/metrics-store";
 import {
   simulatedFetch,
   mockSessionConfig,
@@ -13,7 +15,7 @@ import {
 } from "@/lib/mock-data";
 import { NavBar } from "@/components/pdp/NavBar";
 import { Footer } from "@/components/pdp/Footer";
-import { HeroImage } from "@/components/pdp/HeroImage";
+import { HeroImage, ProductSummary } from "@/components/pdp/HeroImage";
 import { Breadcrumbs } from "@/components/pdp/Breadcrumbs";
 import { ProductDetails } from "@/components/pdp/ProductDetails";
 import { Carousels } from "@/components/pdp/Carousels";
@@ -22,25 +24,24 @@ import { Reviews } from "@/components/pdp/Reviews";
 /**
  * PDP page with the full instrumented boundary hierarchy.
  *
- * The shell boundary wraps everything and has a blocking 50ms "session config"
- * await. This demonstrates the parent-blocks-children problem: all downstream
- * boundaries (nav, pdp, footer) are delayed by the shell await.
+ * The shell await (session-config) and product-api fetch happen directly in the
+ * async page body — NOT inside a Suspense boundary. This means the hero image
+ * is part of the initial HTML payload and renders even with JS disabled.
  *
- * NOTE: All boundaries live in the page (not the layout) because Next.js App
- * Router renders layouts and pages concurrently. A blocking await in the layout
- * does NOT delay the page. To correctly demonstrate parent-blocks-children,
- * the entire hierarchy must be in a single rendering tree.
+ * Only non-LCP-critical sections (nav, breadcrumbs, details, carousels, reviews,
+ * footer) are wrapped in Suspense via TracedBoundary, so they stream in
+ * progressively after the hero.
  *
  * Hierarchy:
- *   shell (50ms session-config)
- *   ├─ nav (150ms nav-config)
- *   ├─ pdp (200ms product-api) ← LCP critical
- *   │  ├─ HeroImage (no own boundary, streams with pdp)
- *   │  ├─ breadcrumbs (80ms category-path)
- *   │  ├─ details (120ms pricing-api)
- *   │  ├─ carousels (350ms reco-engine)
- *   │  └─ reviews (500ms reviews-service)
- *   └─ footer (60ms footer-config)
+ *   shell (50ms session-config)         ← direct await, no Suspense
+ *   ├─ pdp (200ms product-api)          ← direct await, no Suspense, LCP critical
+ *   │  └─ HeroImage                     ← in initial HTML payload
+ *   ├─ nav (150ms nav-config)           ← Suspense
+ *   ├─ breadcrumbs (80ms category-path) ← Suspense
+ *   ├─ details (120ms pricing-api)      ← Suspense
+ *   ├─ carousels (350ms reco-engine)    ← Suspense
+ *   ├─ reviews (500ms reviews-service)  ← Suspense
+ *   └─ footer (60ms footer-config)      ← Suspense
  */
 export default async function PDPPage({
   params,
@@ -48,193 +49,199 @@ export default async function PDPPage({
   params: Promise<{ sku: string }>;
 }) {
   const { sku } = await params;
+  const ctx = getRequestContext();
 
+  // --- Shell: blocking session-config fetch (no Suspense) ---
+  const shellStart = Date.now();
+  await tracedFetch(
+    "session-config",
+    () => simulatedFetch(50, mockSessionConfig()),
+    "shell"
+  );
+  const shellDuration = Date.now() - shellStart;
+
+  metricsStore.recordBoundary({
+    timestamp: Date.now(),
+    requestId: ctx.requestId,
+    route: "/products/[sku]",
+    boundary_path: "shell",
+    wall_start_ms: 0,
+    render_duration_ms: shellDuration,
+    is_lcp_critical: true,
+  });
+
+  // --- Render: hero in initial HTML, everything else streams via Suspense ---
   return (
-    <TracedBoundary
-      name="shell"
-      boundaryPath="shell"
-      lcpCritical={true}
-      fallback={<div className="min-h-screen bg-zinc-950 animate-pulse" />}
-      render={async () => {
-        // Shell-level blocking fetch: simulated session validation / feature flags
-        // This ~50ms await blocks EVERYTHING downstream including the hero image
-        await tracedFetch(
-          "session-config",
-          () => simulatedFetch(50, mockSessionConfig()),
-          "shell"
-        );
+    <>
+      {/* Nav — Suspense, streams after hero */}
+      <TracedBoundary
+        name="nav"
+        boundaryPath="shell.nav"
+        fallback={
+          <div className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 h-14 animate-pulse" />
+        }
+        render={async () => {
+          const data = await tracedFetch(
+            "nav-config",
+            () => simulatedFetch(150, mockNavData()),
+            "shell.nav"
+          );
+          return <NavBar data={data} />;
+        }}
+      />
 
-        return (
-          <>
-            {/* Nav — own suspense boundary */}
-            <TracedBoundary
-              name="nav"
-              boundaryPath="shell.nav"
-              fallback={
-                <div className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 h-14 animate-pulse" />
-              }
-              render={async () => {
-                const data = await tracedFetch(
-                  "nav-config",
-                  () => simulatedFetch(150, mockNavData()),
-                  "shell.nav"
-                );
-                return <NavBar data={data} />;
-              }}
-            />
+      {/* Breadcrumbs — above the main content area */}
+      <TracedBoundary
+        name="breadcrumbs"
+        boundaryPath="shell.pdp.breadcrumbs"
+        fallback={
+          <div className="max-w-7xl mx-auto px-6 py-3">
+            <div className="h-4 bg-zinc-800 rounded w-64 animate-pulse" />
+          </div>
+        }
+        render={async () => {
+          const crumbs = await tracedFetch(
+            "category-path",
+            () => simulatedFetch(80, mockBreadcrumbs()),
+            "shell.pdp.breadcrumbs"
+          );
+          return (
+            <div className="max-w-7xl mx-auto">
+              <Breadcrumbs crumbs={crumbs} />
+            </div>
+          );
+        }}
+      />
 
-            {/* PDP Content — LCP critical boundary */}
-            <main className="min-h-screen">
+      <main className="min-h-screen">
+        <div className="max-w-7xl mx-auto">
+          {/* Two-column PDP layout: hero left, product info right */}
+          <div className="flex flex-col md:flex-row md:items-start">
+            {/* Left: Hero image — in initial HTML, no Suspense, works without JS */}
+            <div className="md:w-1/2 flex-shrink-0">
+              <HeroImage />
+            </div>
+
+            {/* Right: title, details, ATC — all behind Suspense */}
+            <div className="md:w-1/2 md:py-6 md:pl-6">
+              {/* Product title + rating */}
               <TracedBoundary
                 name="pdp"
                 boundaryPath="shell.pdp"
                 lcpCritical={true}
                 fallback={
-                  <div className="max-w-7xl mx-auto p-6 space-y-6">
-                    <div className="h-4 bg-zinc-800 rounded w-48 animate-pulse" />
-                    <div className="flex gap-8">
-                      <div className="flex-1 aspect-square bg-zinc-800 rounded-xl animate-pulse max-w-lg" />
-                      <div className="flex-1 space-y-4">
-                        <div className="h-8 bg-zinc-800 rounded w-3/4 animate-pulse" />
-                        <div className="h-4 bg-zinc-800 rounded w-full animate-pulse" />
-                        <div className="h-4 bg-zinc-800 rounded w-2/3 animate-pulse" />
-                      </div>
-                    </div>
+                  <div className="px-6 md:px-0 pb-4 space-y-3">
+                    <div className="h-8 bg-zinc-800 rounded w-3/4 animate-pulse" />
+                    <div className="h-4 bg-zinc-800 rounded w-full animate-pulse" />
+                    <div className="h-4 bg-zinc-800 rounded w-1/3 animate-pulse" />
                   </div>
                 }
                 render={async () => {
-                  // Product API fetch — provides hero image URL
-                  // This fetch is at the PDP Content boundary level,
-                  // so the hero image data streams as part of the PDP Content shell
                   const product = await tracedFetch(
                     "product-api",
                     () => simulatedFetch(200, mockProductData(sku)),
                     "shell.pdp"
                   );
-
-                  return (
-                    <div className="max-w-7xl mx-auto">
-                      {/* Hero image rendered directly — NOT in its own suspense boundary.
-                          Available as soon as PDP Content boundary resolves. */}
-                      <HeroImage product={product} />
-
-                      {/* Breadcrumbs */}
-                      <TracedBoundary
-                        name="breadcrumbs"
-                        boundaryPath="shell.pdp.breadcrumbs"
-                        fallback={
-                          <div className="px-6 py-3">
-                            <div className="h-4 bg-zinc-800 rounded w-64 animate-pulse" />
-                          </div>
-                        }
-                        render={async () => {
-                          const crumbs = await tracedFetch(
-                            "category-path",
-                            () => simulatedFetch(80, mockBreadcrumbs()),
-                            "shell.pdp.breadcrumbs"
-                          );
-                          return <Breadcrumbs crumbs={crumbs} />;
-                        }}
-                      />
-
-                      {/* Product Details */}
-                      <TracedBoundary
-                        name="details"
-                        boundaryPath="shell.pdp.details"
-                        fallback={
-                          <div className="px-6 py-4 border-t border-zinc-800 space-y-3">
-                            <div className="h-8 bg-zinc-800 rounded w-32 animate-pulse" />
-                            <div className="h-10 bg-zinc-800 rounded w-48 animate-pulse" />
-                          </div>
-                        }
-                        render={async () => {
-                          const details = await tracedFetch(
-                            "pricing-api",
-                            () => simulatedFetch(120, mockProductDetails()),
-                            "shell.pdp.details"
-                          );
-                          return <ProductDetails details={details} />;
-                        }}
-                      />
-
-                      {/* Carousels */}
-                      <TracedBoundary
-                        name="carousels"
-                        boundaryPath="shell.pdp.carousels"
-                        fallback={
-                          <div className="px-6 py-6 border-t border-zinc-800">
-                            <div className="h-5 bg-zinc-800 rounded w-48 animate-pulse mb-4" />
-                            <div className="flex gap-4">
-                              {Array.from({ length: 4 }).map((_, i) => (
-                                <div
-                                  key={i}
-                                  className="w-44 h-52 bg-zinc-800 rounded-lg animate-pulse flex-shrink-0"
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        }
-                        render={async () => {
-                          const data = await tracedFetch(
-                            "reco-engine",
-                            () => simulatedFetch(350, mockCarousels()),
-                            "shell.pdp.carousels"
-                          );
-                          return <Carousels data={data} />;
-                        }}
-                      />
-
-                      {/* Reviews — slowest boundary */}
-                      <TracedBoundary
-                        name="reviews"
-                        boundaryPath="shell.pdp.reviews"
-                        fallback={
-                          <div className="px-6 py-6 border-t border-zinc-800">
-                            <div className="h-5 bg-zinc-800 rounded w-40 animate-pulse mb-4" />
-                            <div className="space-y-3">
-                              {Array.from({ length: 3 }).map((_, i) => (
-                                <div
-                                  key={i}
-                                  className="h-16 bg-zinc-800 rounded animate-pulse"
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        }
-                        render={async () => {
-                          const data = await tracedFetch(
-                            "reviews-service",
-                            () => simulatedFetch(500, mockReviews()),
-                            "shell.pdp.reviews"
-                          );
-                          return <Reviews data={data} />;
-                        }}
-                      />
-                    </div>
-                  );
+                  return <ProductSummary product={product} />;
                 }}
               />
-            </main>
 
-            {/* Footer */}
-            <TracedBoundary
-              name="footer"
-              boundaryPath="shell.footer"
-              fallback={
-                <div className="bg-zinc-900 border-t border-zinc-800 h-48 animate-pulse" />
-              }
-              render={async () => {
-                const data = await tracedFetch(
-                  "footer-config",
-                  () => simulatedFetch(60, mockFooterData()),
-                  "shell.footer"
-                );
-                return <Footer data={data} />;
-              }}
-            />
-          </>
-        );
-      }}
-    />
+              {/* Product Details: pricing, variants, ATC */}
+              <TracedBoundary
+                name="details"
+                boundaryPath="shell.pdp.details"
+                fallback={
+                  <div className="px-6 md:px-0 py-4 border-t border-zinc-800 space-y-3">
+                    <div className="h-8 bg-zinc-800 rounded w-32 animate-pulse" />
+                    <div className="h-10 bg-zinc-800 rounded w-48 animate-pulse" />
+                  </div>
+                }
+                render={async () => {
+                  const details = await tracedFetch(
+                    "pricing-api",
+                    () => simulatedFetch(120, mockProductDetails()),
+                    "shell.pdp.details"
+                  );
+                  return <ProductDetails details={details} />;
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Below the fold: carousels + reviews */}
+
+          {/* Carousels */}
+          <TracedBoundary
+            name="carousels"
+            boundaryPath="shell.pdp.carousels"
+            fallback={
+              <div className="px-6 py-6 border-t border-zinc-800">
+                <div className="h-5 bg-zinc-800 rounded w-48 animate-pulse mb-4" />
+                <div className="flex gap-4">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="w-44 h-52 bg-zinc-800 rounded-lg animate-pulse flex-shrink-0"
+                    />
+                  ))}
+                </div>
+              </div>
+            }
+            render={async () => {
+              const data = await tracedFetch(
+                "reco-engine",
+                () => simulatedFetch(350, mockCarousels()),
+                "shell.pdp.carousels"
+              );
+              return <Carousels data={data} />;
+            }}
+          />
+
+          {/* Reviews — slowest boundary */}
+          <TracedBoundary
+            name="reviews"
+            boundaryPath="shell.pdp.reviews"
+            fallback={
+              <div className="px-6 py-6 border-t border-zinc-800">
+                <div className="h-5 bg-zinc-800 rounded w-40 animate-pulse mb-4" />
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="h-16 bg-zinc-800 rounded animate-pulse"
+                    />
+                  ))}
+                </div>
+              </div>
+            }
+            render={async () => {
+              const data = await tracedFetch(
+                "reviews-service",
+                () => simulatedFetch(500, mockReviews()),
+                "shell.pdp.reviews"
+              );
+              return <Reviews data={data} />;
+            }}
+          />
+        </div>
+      </main>
+
+      {/* Footer */}
+      <TracedBoundary
+        name="footer"
+        boundaryPath="shell.footer"
+        fallback={
+          <div className="bg-zinc-900 border-t border-zinc-800 h-48 animate-pulse" />
+        }
+        render={async () => {
+          const data = await tracedFetch(
+            "footer-config",
+            () => simulatedFetch(60, mockFooterData()),
+            "shell.footer"
+          );
+          return <Footer data={data} />;
+        }}
+      />
+    </>
   );
 }

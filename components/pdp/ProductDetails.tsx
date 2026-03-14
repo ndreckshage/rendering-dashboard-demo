@@ -13,7 +13,7 @@ export function ProductDetails({ details }: { details: DetailsData }) {
   );
 
   return (
-    <div className="px-6 py-4 border-t border-zinc-800">
+    <div className="px-6 md:px-0 py-4 border-t border-zinc-800">
       {/* Pricing */}
       <div className="flex items-baseline gap-3 mb-4">
         <span className="text-2xl font-bold text-white">
