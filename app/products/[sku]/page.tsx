@@ -27,6 +27,7 @@ import { Pricing } from "@/components/pdp/Pricing";
 import { Inventory } from "@/components/pdp/Inventory";
 import { ProductBullets } from "@/components/pdp/ProductBullets";
 import { ProductOptions } from "@/components/pdp/ProductOptions";
+import { AddToCart } from "@/components/pdp/AddToCart";
 import { Carousels } from "@/components/pdp/Carousels";
 import { Reviews } from "@/components/pdp/Reviews";
 
@@ -34,27 +35,28 @@ import { Reviews } from "@/components/pdp/Reviews";
  * PDP page with GQL Federation simulation.
  *
  * Hierarchy:
- *   shell (await: getExperimentContext — blocks all content)
- *   ├─ nav (getNavigation → cms.navigation)
- *   ├─ content (getContentLayout → cms.layout)
- *   │  └─ breadcrumbs (getBreadcrumbs → category.tree)
- *   ├─ main
+ *   Layout (await: getExperimentContext — blocks all content)
+ *   ├─ Nav (getNavigation → cms.navigation)
+ *   ├─ Content (getContentLayout → cms.layout)
+ *   │  └─ Breadcrumbs (getBreadcrumbs → category.tree)
+ *   ├─ Main
  *   │  ├─ left
- *   │  │  ├─ hero (getHeroImage → media.heroImage) [blocking — no Suspense, for JS-disabled]
- *   │  │  └─ thumbnails (getThumbnails → media.thumbnails)
+ *   │  │  ├─ Hero (getHeroImage → media.heroImage) [blocking — no Suspense, for JS-disabled]
+ *   │  │  └─ Thumbnails (getThumbnails → media.thumbnails)
  *   │  └─ right
- *   │     ├─ pdp (getProductInfo → product.core + product.bullets,
- *   │     │      getProductPricing → pricing.current + inventory + reviews.summary) [LCP]
- *   │     ├─ bullets (getProductInfo → cache hit!)
- *   │     └─ options (variants + add to cart, from getProductInfo cache hit)
- *   ├─ carousels (getRecommendations → reco.personalized, product.cards, pricing.batch)
- *   ├─ reviews (getReviews → reviews.list)
- *   └─ footer (getFooter → cms.footer)
+ *   │     ├─ Title (getProductInfo → product.core + product.bullets) [LCP]
+ *   │     ├─ Pricing (getProductPricing → pricing.current + inventory + reviews.summary)
+ *   │     ├─ Bullets (getProductInfo → cache hit!)
+ *   │     ├─ Options (variants, from getProductInfo cache hit)
+ *   │     └─ AddToCart (static — no query)
+ *   ├─ Carousels (getRecommendations → reco.personalized, product.cards, pricing.batch)
+ *   ├─ Reviews (getReviews → reviews.list)
+ *   └─ Footer (getFooter → cms.footer)
  *
  * Key patterns:
  * - Sequential waterfall: experiment context blocks all downstream content
  * - Query grouping: getProductPricing bundles pricing + inventory + reviews.summary
- * - Cache dedup: getProductInfo called by pdp + bullets + options — second/third are instant
+ * - Cache dedup: getProductInfo called by Title + Bullets + Options — second/third are instant
  */
 export default async function PDPPage({
   params,
@@ -64,25 +66,25 @@ export default async function PDPPage({
   const { sku } = await params;
   const ctx = getRequestContext();
 
-  // --- Shell: blocking experiment context (sequential waterfall) ---
-  const shellStart = Date.now();
-  await executeGqlQuery("getExperimentContext", "shell", mockExperimentContext);
-  const shellFetchEnd = Date.now();
-  const shellFetchDuration = shellFetchEnd - shellStart;
+  // --- Layout: blocking experiment context (sequential waterfall) ---
+  const layoutStart = Date.now();
+  await executeGqlQuery("getExperimentContext", "Layout", mockExperimentContext);
+  const layoutFetchEnd = Date.now();
+  const layoutFetchDuration = layoutFetchEnd - layoutStart;
 
   busyWait(5);
-  const shellSyncEnd = Date.now();
-  const shellRenderCost = shellSyncEnd - shellFetchEnd;
+  const layoutSyncEnd = Date.now();
+  const layoutRenderCost = layoutSyncEnd - layoutFetchEnd;
 
   metricsStore.recordBoundary({
     timestamp: Date.now(),
     requestId: ctx.requestId,
     route: "/products/[sku]",
-    boundary_path: "shell",
+    boundary_path: "Layout",
     wall_start_ms: 0,
-    render_duration_ms: shellSyncEnd - shellStart,
-    fetch_duration_ms: shellFetchDuration,
-    render_cost_ms: shellRenderCost,
+    render_duration_ms: layoutSyncEnd - layoutStart,
+    fetch_duration_ms: layoutFetchDuration,
+    render_cost_ms: layoutRenderCost,
     blocked_ms: 0,
     is_lcp_critical: true,
   });
@@ -92,7 +94,7 @@ export default async function PDPPage({
   const heroWallStart = heroStart - ctx.requestStartTs;
   const heroData = await executeGqlQuery(
     "getHeroImage",
-    "shell.content.main.hero",
+    "Layout.Content.Main.Hero",
     mockHeroImage,
   );
   const heroFetchEnd = Date.now();
@@ -105,7 +107,7 @@ export default async function PDPPage({
     timestamp: Date.now(),
     requestId: ctx.requestId,
     route: "/products/[sku]",
-    boundary_path: "shell.content.main.hero",
+    boundary_path: "Layout.Content.Main.Hero",
     wall_start_ms: heroWallStart,
     render_duration_ms: heroSyncEnd - heroStart,
     fetch_duration_ms: heroFetchDuration,
@@ -118,8 +120,8 @@ export default async function PDPPage({
     <>
       {/* Nav */}
       <TracedBoundary
-        name="nav"
-        boundaryPath="shell.nav"
+        name="Nav"
+        boundaryPath="Layout.Nav"
         renderCostMs={80}
         fallback={
           <div className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 h-16 animate-pulse" />
@@ -127,7 +129,7 @@ export default async function PDPPage({
         render={async (ref) => {
           const data = await executeGqlQuery(
             "getNavigation",
-            "shell.nav",
+            "Layout.Nav",
             mockNavData,
           );
           ref.ts = Date.now();
@@ -139,8 +141,8 @@ export default async function PDPPage({
         <div className="max-w-7xl mx-auto">
           {/* Content wrapper — fetches CMS layout, gates breadcrumbs */}
           <TracedBoundary
-            name="content"
-            boundaryPath="shell.content"
+            name="Content"
+            boundaryPath="Layout.Content"
             renderCostMs={2}
             fallback={
               <div className="px-6 py-3">
@@ -150,14 +152,14 @@ export default async function PDPPage({
             render={async (ref) => {
               await executeGqlQuery(
                 "getContentLayout",
-                "shell.content",
+                "Layout.Content",
                 mockContentLayout,
               );
               ref.ts = Date.now();
               return (
                 <TracedBoundary
-                  name="breadcrumbs"
-                  boundaryPath="shell.content.breadcrumbs"
+                  name="Breadcrumbs"
+                  boundaryPath="Layout.Content.Breadcrumbs"
                   renderCostMs={5}
                   fallback={
                     <div className="px-6 py-3">
@@ -167,7 +169,7 @@ export default async function PDPPage({
                   render={async (ref) => {
                     const crumbs = await executeGqlQuery(
                       "getBreadcrumbs",
-                      "shell.content.breadcrumbs",
+                      "Layout.Content.Breadcrumbs",
                       mockBreadcrumbs,
                     );
                     ref.ts = Date.now();
@@ -186,8 +188,8 @@ export default async function PDPPage({
 
               {/* Thumbnails — own query, own boundary */}
               <TracedBoundary
-                name="thumbnails"
-                boundaryPath="shell.content.main.thumbnails"
+                name="Thumbnails"
+                boundaryPath="Layout.Content.Main.Thumbnails"
                 renderCostMs={3}
                 fallback={
                   <div className="px-6 py-2 flex gap-2">
@@ -202,7 +204,7 @@ export default async function PDPPage({
                 render={async (ref) => {
                   const data = await executeGqlQuery(
                     "getThumbnails",
-                    "shell.content.main.thumbnails",
+                    "Layout.Content.Main.Thumbnails",
                     mockThumbnails,
                   );
                   ref.ts = Date.now();
@@ -213,10 +215,10 @@ export default async function PDPPage({
 
             {/* Right: product info */}
             <div className="md:w-1/2 md:py-6 md:pl-6">
-              {/* PDP — getProductInfo (product.core + product.bullets) */}
+              {/* Title — getProductInfo (product.core + product.bullets) */}
               <TracedBoundary
-                name="pdp"
-                boundaryPath="shell.content.main.pdp"
+                name="Title"
+                boundaryPath="Layout.Content.Main.Title"
                 renderCostMs={5}
                 fallback={
                   <div className="px-6 md:px-0 pb-4 space-y-3">
@@ -231,7 +233,7 @@ export default async function PDPPage({
                 render={async (ref) => {
                   const info = await executeGqlQuery(
                     "getProductInfo",
-                    "shell.content.main.pdp",
+                    "Layout.Content.Main.Title",
                     () => mockProductInfo(sku),
                   );
                   ref.ts = Date.now();
@@ -241,8 +243,8 @@ export default async function PDPPage({
 
               {/* Pricing — getProductPricing (intentionally slow ~500ms) */}
               <TracedBoundary
-                name="pricing"
-                boundaryPath="shell.content.main.pricing"
+                name="Pricing"
+                boundaryPath="Layout.Content.Main.Pricing"
                 renderCostMs={3}
                 fallback={
                   <div className="px-6 md:px-0 py-3 space-y-2">
@@ -253,7 +255,7 @@ export default async function PDPPage({
                 render={async (ref) => {
                   const pricing = await executeGqlQuery(
                     "getProductPricing",
-                    "shell.content.main.pricing",
+                    "Layout.Content.Main.Pricing",
                     mockProductPricing,
                   );
                   ref.ts = Date.now();
@@ -274,8 +276,8 @@ export default async function PDPPage({
 
               {/* Bullets — getProductInfo cache hit → key features + specs */}
               <TracedBoundary
-                name="bullets"
-                boundaryPath="shell.content.main.bullets"
+                name="Bullets"
+                boundaryPath="Layout.Content.Main.Bullets"
                 renderCostMs={3}
                 fallback={
                   <div className="px-6 md:px-0 border-t border-zinc-800 space-y-2">
@@ -290,7 +292,7 @@ export default async function PDPPage({
                 render={async (ref) => {
                   const info = await executeGqlQuery(
                     "getProductInfo",
-                    "shell.content.main.bullets",
+                    "Layout.Content.Main.Bullets",
                     () => mockProductInfo(sku),
                   );
                   ref.ts = Date.now();
@@ -298,25 +300,40 @@ export default async function PDPPage({
                 }}
               />
 
-              {/* Options — getProductInfo cache hit → variants + add to cart */}
+              {/* Options — getProductInfo cache hit → variants */}
               <TracedBoundary
-                name="options"
-                boundaryPath="shell.content.main.options"
+                name="Options"
+                boundaryPath="Layout.Content.Main.Options"
                 renderCostMs={3}
                 fallback={
                   <div className="px-6 md:px-0 py-4 border-t border-zinc-800 space-y-3">
                     <div className="h-10 bg-zinc-800 rounded w-48 animate-pulse" />
-                    <div className="h-12 bg-zinc-800 rounded w-full animate-pulse" />
                   </div>
                 }
                 render={async (ref) => {
                   const info = await executeGqlQuery(
                     "getProductInfo",
-                    "shell.content.main.options",
+                    "Layout.Content.Main.Options",
                     () => mockProductInfo(sku),
                   );
                   ref.ts = Date.now();
                   return <ProductOptions data={info} />;
+                }}
+              />
+
+              {/* AddToCart — standalone, no query needed */}
+              <TracedBoundary
+                name="AddToCart"
+                boundaryPath="Layout.Content.Main.AddToCart"
+                renderCostMs={1}
+                fallback={
+                  <div className="px-6 md:px-0 py-4 border-t border-zinc-800">
+                    <div className="h-12 bg-zinc-800 rounded w-full animate-pulse" />
+                  </div>
+                }
+                render={async (ref) => {
+                  ref.ts = Date.now();
+                  return <AddToCart />;
                 }}
               />
             </div>
@@ -324,8 +341,8 @@ export default async function PDPPage({
 
           {/* Carousels — grouped: reco + product cards + pricing batch */}
           <TracedBoundary
-            name="carousels"
-            boundaryPath="shell.content.carousels"
+            name="Carousels"
+            boundaryPath="Layout.Content.Carousels"
             renderCostMs={15}
             fallback={
               <div className="px-6 py-6 border-t border-zinc-800">
@@ -343,7 +360,7 @@ export default async function PDPPage({
             render={async (ref) => {
               const data = await executeGqlQuery(
                 "getRecommendations",
-                "shell.content.carousels",
+                "Layout.Content.Carousels",
                 mockCarousels,
               );
               ref.ts = Date.now();
@@ -353,8 +370,8 @@ export default async function PDPPage({
 
           {/* Reviews — reviews.list subgraph (slowest) */}
           <TracedBoundary
-            name="reviews"
-            boundaryPath="shell.content.reviews"
+            name="Reviews"
+            boundaryPath="Layout.Content.Reviews"
             renderCostMs={5}
             fallback={
               <div className="px-6 py-6 border-t border-zinc-800">
@@ -372,7 +389,7 @@ export default async function PDPPage({
             render={async (ref) => {
               const data = await executeGqlQuery(
                 "getReviews",
-                "shell.content.reviews",
+                "Layout.Content.Reviews",
                 mockReviews,
               );
               ref.ts = Date.now();
@@ -384,8 +401,8 @@ export default async function PDPPage({
 
       {/* Footer */}
       <TracedBoundary
-        name="footer"
-        boundaryPath="shell.footer"
+        name="Footer"
+        boundaryPath="Layout.Footer"
         renderCostMs={5}
         fallback={
           <div className="bg-zinc-900 border-t border-zinc-800 h-48 animate-pulse" />
@@ -393,7 +410,7 @@ export default async function PDPPage({
         render={async (ref) => {
           const data = await executeGqlQuery(
             "getFooter",
-            "shell.footer",
+            "Layout.Footer",
             mockFooterData,
           );
           ref.ts = Date.now();

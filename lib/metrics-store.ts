@@ -56,7 +56,7 @@ export interface QueryMetric {
 const MAX_PAGE_LOADS = 200;
 
 /** Number of boundaries the PDP page records per request */
-export const EXPECTED_BOUNDARY_COUNT = 13;
+export const EXPECTED_BOUNDARY_COUNT = 14;
 
 class MetricsStore {
   private boundaryMetrics: BoundaryMetric[] = [];
