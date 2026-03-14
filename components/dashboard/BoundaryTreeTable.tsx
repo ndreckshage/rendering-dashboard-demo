@@ -225,20 +225,18 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
     return matching;
   }, [selectedSubgraphs, subgraphOps]);
 
-  // Call count summary stats
+  // Call count summary stats (uncached = actual network calls)
   const callSummary = useMemo(() => {
     if (subgraphOps.length === 0) return null;
     const requestIds = new Set(subgraphOps.map((o) => o.requestId));
     const numRequests = requestIds.size;
-    const querySet = new Set(queries.map((q) => `${q.requestId}:${q.queryName}`));
-    const totalOps = subgraphOps.length;
+    const uncachedOps = subgraphOps.filter((o) => !o.cached).length;
     const cachedOps = subgraphOps.filter((o) => o.cached).length;
     return {
-      queriesPerReq: Math.round((querySet.size / numRequests) * 10) / 10,
-      opsPerReq: Math.round((totalOps / numRequests) * 10) / 10,
-      cachePct: totalOps > 0 ? Math.round((cachedOps / totalOps) * 100) : 0,
+      callsPerReq: Math.round((uncachedOps / numRequests) * 10) / 10,
+      dedupedPerReq: Math.round((cachedOps / numRequests) * 10) / 10,
     };
-  }, [subgraphOps, queries]);
+  }, [subgraphOps]);
 
   const treeNodes = useMemo(() => {
     if (boundaries.length === 0 && queries.length === 0) return [];
@@ -444,11 +442,13 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl }: Pr
       {/* Call count summary */}
       {callSummary && (
         <div className="flex gap-4 mb-2 text-xs text-zinc-500">
-          <span>{callSummary.queriesPerReq} queries/req</span>
-          <span className="text-zinc-700">|</span>
-          <span>{callSummary.opsPerReq} subgraph ops/req</span>
-          <span className="text-zinc-700">|</span>
-          <span>{callSummary.cachePct}% cached</span>
+          <span>{callSummary.callsPerReq} subgraph calls/req</span>
+          {callSummary.dedupedPerReq > 0 && (
+            <>
+              <span className="text-zinc-700">|</span>
+              <span>{callSummary.dedupedPerReq} saved by dedup</span>
+            </>
+          )}
         </div>
       )}
       <div className="flex gap-2 mb-2 justify-end">

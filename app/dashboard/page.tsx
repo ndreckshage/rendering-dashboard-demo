@@ -127,7 +127,6 @@ export default function DashboardPage() {
             />
           ) : activeTab === "subgraphs" ? (
             <SubgraphCallsTab
-              boundaries={metrics?.boundaries ?? []}
               queries={metrics?.queries ?? []}
               subgraphOps={metrics?.subgraphOps ?? []}
               pctl={pctl}
