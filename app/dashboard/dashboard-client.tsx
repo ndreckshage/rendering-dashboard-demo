@@ -116,12 +116,6 @@ export function DashboardClient({ initialTab }: { initialTab: TabKey }) {
                   YAML
                 </span>
               )}
-              <a
-                href="/products/demo-sku"
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                View Demo
-              </a>
             </div>
             <div className="flex items-center gap-2 mt-3">
               <select
@@ -162,21 +156,6 @@ export function DashboardClient({ initialTab }: { initialTab: TabKey }) {
                   : metrics ? `${metrics.totalPageLoads} loads` : "loading..."}
               </span>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <YamlUpload onLoad={loadMockData} />
-            <button
-              onClick={loadDemoData}
-              className="px-3 py-1.5 text-sm border border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors flex-shrink-0"
-            >
-              Demo
-            </button>
-            <button
-              onClick={clearMetrics}
-              className="px-3 py-1.5 text-sm border border-zinc-700 rounded text-zinc-400 hover:text-red-300 hover:border-red-800 transition-colors flex-shrink-0"
-            >
-              Clear
-            </button>
           </div>
         </div>
 
@@ -272,11 +251,24 @@ export function DashboardClient({ initialTab }: { initialTab: TabKey }) {
           )}
         </div>
 
-        {/* Link to PDP */}
-        <div className="text-center pt-2 pb-4">
+        {/* Actions */}
+        <div className="flex items-center justify-center gap-3 pt-2 pb-4">
+          <YamlUpload onLoad={loadMockData} />
+          <button
+            onClick={loadDemoData}
+            className="px-3 py-1.5 text-sm border border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
+          >
+            Demo
+          </button>
+          <button
+            onClick={clearMetrics}
+            className="px-3 py-1.5 text-sm border border-zinc-700 rounded text-zinc-400 hover:text-red-300 hover:border-red-800 transition-colors"
+          >
+            Clear
+          </button>
           <a
             href="/products/demo-sku"
-            className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+            className="px-3 py-1.5 text-sm text-blue-400 hover:text-blue-300 transition-colors"
           >
             View Demo &rarr;
           </a>
