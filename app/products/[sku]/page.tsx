@@ -153,7 +153,13 @@ export default async function PDPPage({
             mockNavData,
           );
           ref.ts = Date.now();
-          return <NavBar data={data} cartSlot={<CartIndicator />} slow={query.slow === "1"} />;
+          return (
+            <NavBar
+              data={data}
+              cartSlot={<CartIndicator />}
+              slow={query.slow === "1"}
+            />
+          );
         }}
       />
 
@@ -303,11 +309,11 @@ export default async function PDPPage({
                 boundaryPath="Layout.Content.Main.Bullets"
                 renderCostMs={3}
                 fallback={
-                  <div className="px-6 md:px-0 border-t border-zinc-800 space-y-2">
+                  <div className="px-6 md:px-0 border-t border-zinc-800 space-y-2 pb-[19px]">
                     {Array.from({ length: 6 }).map((_, i) => (
                       <div
                         key={i}
-                        className="h-4 bg-zinc-800 rounded w-full animate-pulse mt-4 mb-4"
+                        className="h-4 bg-zinc-800 rounded w-full animate-pulse mt-[19px]"
                       />
                     ))}
                   </div>
@@ -329,8 +335,9 @@ export default async function PDPPage({
                 boundaryPath="Layout.Content.Main.Options"
                 renderCostMs={3}
                 fallback={
-                  <div className="px-6 md:px-0 py-3 border-t border-zinc-800 space-y-2">
-                    <div className="h-10 bg-zinc-800 rounded w-48 animate-pulse" />
+                  <div className="px-6 md:px-0 py-4 mb-5 border-t border-zinc-800 space-y-2">
+                    <div className="h-4 bg-zinc-800 rounded w-36 animate-pulse mb-4" />
+                    <div className="h-8 bg-zinc-800 rounded w-48 animate-pulse" />
                   </div>
                 }
                 render={async (ref) => {
