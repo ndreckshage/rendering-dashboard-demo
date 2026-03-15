@@ -1,4 +1,4 @@
-# RSC Rendering Performance Dashboard
+# Suspense Dash
 
 A Next.js 16 performance monitoring dashboard that instruments React Server Component rendering at the Suspense boundary level. Built to understand and optimize the rendering behavior of ecommerce product pages (PDPs) using a federated GraphQL architecture.
 
@@ -22,7 +22,7 @@ The dashboard visualizes these metrics across multiple page loads with percentil
 │  Browser                                                │
 │  ┌──────────────┐  ┌────────────────────────────────┐   │
 │  │ PDP Page     │  │ Dashboard                      │   │
-│  │ (SSR + CSR)  │──│ • Critical Path Waterfall      │   │
+│  │ (SSR + CSR)  │──│ • Suspense Path Waterfall      │   │
 │  │              │  │ • Boundary Tree Table           │   │
 │  │ MetricsCollector│ • Subgraph Call Analysis        │   │
 │  │  ↓           │  │                                │   │
@@ -119,13 +119,18 @@ Latency follows a realistic tail distribution: 85% tight cluster, 11% moderately
 
 Three visualization tabs:
 
-**Critical Initialization Path** — A waterfall chart showing boundary execution timeline. Blocks are color-coded by component and show parent-child blocking relationships. Hover for fetch/render/blocked breakdown.
+**Suspense Path** — A waterfall chart showing boundary execution timeline across SSR queries, SSR main thread renders, CSR queries, and CSR main thread (LoAF). Marker lines track LCP data ready, LCP render, hydration, and init complete milestones. Blocks are color-coded by component. Hover for fetch/render/blocked breakdown.
 
-**Boundary Tree** — Hierarchical table view: boundaries → queries → subgraph operations. Expandable rows show query dedup detection (cached vs actual execution). Latencies aggregated by selected percentile.
+**Boundary Tree** — Hierarchical table view: boundaries → queries → subgraph operations. Expandable rows show query dedup detection (cached vs actual execution). Filterable by LCP path (shows only LCP-critical boundaries and ancestors) or by subgraph. Latencies aggregated by selected percentile with SLO status indicators.
 
 **Subgraph Calls** — Aggregated view of subgraph utilization: calls per request, dedup rate, per-operation breakdown by boundary, client vs server phase separation.
 
 All tabs support percentile selection (p50, p75, p90, p95, p99) and page type filtering.
+
+### Navigation
+
+- **PDP page** includes a "View Dash" link and a **Slow Mode toggle** in the nav bar
+- **Dashboard** includes a "View Demo" link in the header
 
 ## Getting Started
 
@@ -143,7 +148,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### Slow Mode
 
-Add `?slow=1` to the PDP URL to multiply all latencies by 20× — useful for visually observing Suspense streaming behavior.
+Toggle via the "Slow" button in the PDP nav bar (or add `?slow=1` to the URL). Multiplies all latencies by 20× — useful for visually observing Suspense streaming behavior.
 
 ## Key Files
 
