@@ -8,6 +8,7 @@ import {
   clientMetricsStore,
   type ClientMetrics,
 } from "@/lib/client-metrics-store";
+import { YamlUpload } from "@/components/dashboard/YamlUpload";
 
 const PERCENTILE_OPTIONS = [50, 75, 90, 95, 99] as const;
 
@@ -141,6 +142,13 @@ export function DashboardClient({ initialTab }: { initialTab: TabKey }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <YamlUpload onLoad={refreshMetrics} />
+            <button
+              onClick={loadDemoData}
+              className="px-3 py-1.5 text-sm border border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors flex-shrink-0"
+            >
+              Demo
+            </button>
             <button
               onClick={clearMetrics}
               className="px-3 py-1.5 text-sm border border-zinc-700 rounded text-zinc-400 hover:text-red-300 hover:border-red-800 transition-colors flex-shrink-0"

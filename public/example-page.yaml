@@ -1,0 +1,162 @@
+# Example PDP page — p99 timing profile
+# Import this file into the dashboard via "Import YAML" to visualize.
+
+route: /products/[sku]
+percentile: 99
+
+hydration_ms: 185
+navigation_timing:
+  dom_interactive: 125
+  dom_content_loaded: 155
+  load_event: 420
+  tbt: 48
+  loaf_count: 3
+
+boundaries:
+  Layout:
+    fetch: 35
+    render_cost: 6
+    lcp_critical: true
+    queries:
+      getExperimentContext:
+        ops:
+          experiment.context: 35
+
+    Nav:
+      fetch: 95
+      render_cost: 3
+      queries:
+        getNavigation:
+          ops:
+            cms.navigation: 95
+
+    Content:
+      fetch: 65
+      render_cost: 2
+      queries:
+        getContentLayout:
+          ops:
+            cms.layout: 65
+
+      Breadcrumbs:
+        fetch: 58
+        render_cost: 2
+        queries:
+          getBreadcrumbs:
+            ops:
+              category.tree: 58
+
+    Main.Hero:
+      fetch: 38
+      render_cost: 4
+      lcp_critical: true
+      queries:
+        getHeroImage:
+          ops:
+            media.heroImage: 38
+
+    Main.Thumbnails:
+      fetch: 55
+      render_cost: 3
+      queries:
+        getThumbnails:
+          ops:
+            media.thumbnails: 55
+
+    Main.Title:
+      fetch: 48
+      render_cost: 6
+      lcp_critical: true
+      queries:
+        getProductInfo:
+          ops:
+            product.core: 35
+            product.bullets: 48
+
+    Main.Pricing:
+      fetch: 380
+      render_cost: 8
+      queries:
+        getProductPricing:
+          ops:
+            pricing.current: 380
+            inventory.availability: 45
+            reviews.summary: 55
+
+    Main.Bullets:
+      render_cost: 3
+      queries:
+        getProductInfo:
+          ops:
+            product.core:
+              duration: 35
+              cached: true
+            product.bullets:
+              duration: 48
+              cached: true
+
+    Main.Options:
+      render_cost: 2
+      queries:
+        getProductInfo:
+          ops:
+            product.core:
+              duration: 35
+              cached: true
+            product.bullets:
+              duration: 48
+              cached: true
+
+    Main.AddToCart:
+      render_cost: 1
+
+    Carousels:
+      fetch: 195
+      render_cost: 14
+      queries:
+        getRecommendations:
+          ops:
+            reco.personalized: 195
+            product.cards: 65
+            pricing.batch: 130
+
+    Reviews:
+      fetch: 380
+      render_cost: 6
+      queries:
+        getReviews:
+          ops:
+            reviews.list: 380
+
+    Footer:
+      fetch: 45
+      render_cost: 5
+      queries:
+        getFooter:
+          ops:
+            cms.footer: 45
+
+csr_boundaries:
+  CartIndicator:
+    fetch: 85
+    render_cost: 2
+    queries:
+      getUserCart:
+        ops:
+          user.cart: 85
+
+  FavoriteButton:
+    fetch: 65
+    render_cost: 1
+    queries:
+      getUserFavorites:
+        ops:
+          user.favorites: 65
+
+  ReviewsQA:
+    fetch: 215
+    render_cost: 4
+    queries:
+      getReviewsQA:
+        ops:
+          reviews.qa: 215
