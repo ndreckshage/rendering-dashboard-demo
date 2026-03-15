@@ -454,6 +454,31 @@ function computeTree(
     return depth;
   }
 
+  // Schedule boundaries to compute wallStart (same algorithm as waterfall but
+  // using real pctl fetch durations, not the fudged waterfall values)
+  const wallStartByPath = new Map<string, number>();
+  function scheduleBoundaries(roots: BoundaryInfo[], parentFetchEnd: number) {
+    for (const b of roots) {
+      let boundaryFetch = 0;
+      if (b.queries.length > 0) {
+        const q = b.queries[0];
+        if (q.duration !== undefined) {
+          boundaryFetch = atPctl(q.duration, pctl);
+        } else {
+          const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
+          boundaryFetch = Math.max(0, ...opDurations);
+        }
+      }
+      wallStartByPath.set(b.path, parentFetchEnd);
+      // Children fetch concurrently after parent fetch completes
+      scheduleBoundaries(b.children, parentFetchEnd + boundaryFetch);
+    }
+  }
+  scheduleBoundaries(ssrRoots, 0);
+  // CSR boundaries start after hydration — but we don't have hydrationMs here,
+  // so just use 0-based offsets (tree table shows relative times anyway)
+  scheduleBoundaries(csrRoots, 0);
+
   const nodes: MockTreeNode[] = [];
   let uncachedOps = 0;
   let cachedOps = 0;
@@ -476,6 +501,7 @@ function computeTree(
 
     const renderCost = atPctl(b.renderCost, pctl, 1);
     const total = boundaryFetch + renderCost;
+    const wallStart = wallStartByPath.get(b.path) ?? 0;
 
     nodes.push({
       name: b.name,
@@ -483,7 +509,7 @@ function computeTree(
       depth,
       type: "boundary",
       boundaryPath: b.path,
-      wallStartPctl: 0, // filled in by thread sim below
+      wallStartPctl: Math.round(wallStart),
       fetchPctl: boundaryFetch,
       renderCostPctl: renderCost,
       blockedPctl: 0,
