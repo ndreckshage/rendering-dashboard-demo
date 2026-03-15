@@ -1,17 +1,19 @@
 import type { ReactNode } from "react";
+import { SlowModeToggle } from "./SlowModeToggle";
 
 interface NavData {
   categories: { name: string; href: string }[];
   logo: string;
 }
 
-export function NavBar({ data, cartSlot }: { data: NavData; cartSlot?: ReactNode }) {
+export function NavBar({ data, cartSlot, slow }: { data: NavData; cartSlot?: ReactNode; slow?: boolean }) {
   return (
     <nav className="bg-zinc-900 border-b border-zinc-800 px-4 md:px-6 py-3 md:py-4 overflow-hidden">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 flex-shrink-0">
           <span className="text-lg font-bold text-white">{data.logo}</span>
           <a href="/dashboard" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">View Dash</a>
+          <SlowModeToggle initialSlow={slow ?? false} />
         </div>
         <div className="hidden md:flex gap-6">
           {data.categories.map((cat) => (

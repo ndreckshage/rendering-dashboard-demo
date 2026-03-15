@@ -153,7 +153,7 @@ export default async function PDPPage({
             mockNavData,
           );
           ref.ts = Date.now();
-          return <NavBar data={data} cartSlot={<CartIndicator />} />;
+          return <NavBar data={data} cartSlot={<CartIndicator />} slow={query.slow === "1"} />;
         }}
       />
 
