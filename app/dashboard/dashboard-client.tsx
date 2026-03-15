@@ -147,12 +147,6 @@ export function DashboardClient({ initialTab }: { initialTab: TabKey }) {
             >
               Clear
             </button>
-            <button
-              onClick={refreshMetrics}
-              className="px-3 py-1.5 text-sm border border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors flex-shrink-0"
-            >
-              Refresh
-            </button>
           </div>
         </div>
 
