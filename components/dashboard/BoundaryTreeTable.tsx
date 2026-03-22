@@ -6,12 +6,9 @@ import type {
   QueryMetric,
   SubgraphOperationMetric,
 } from "@/lib/metrics-store";
-import {
-  SUBGRAPHS,
-  type SubgraphName,
-} from "@/lib/gql-federation";
 import { percentile, median as medianUtil } from "@/lib/percentile";
 import type { MockTreeData } from "@/lib/mock-metrics";
+import { buildSubgraphColorMap, DEFAULT_SUBGRAPH_COLOR } from "@/lib/subgraph-colors";
 
 interface Props {
   boundaries: BoundaryMetric[];
@@ -350,9 +347,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
       } else {
         // Group ops by subgraph — aggregate all ops for this subgraph under this query
         const sgName = item.subgraphName;
-        const sgSlo = sgName
-          ? SUBGRAPHS[sgName as SubgraphName]?.sloMs ?? 0
-          : 0;
+        const sgSlo = 0;
         // Collect all ops for this subgraph under this boundary+query
         const matchingOps: SubgraphOperationMetric[] = [];
         for (const op of subgraphOps) {
@@ -362,9 +357,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         }
         const durations = matchingOps.map((m) => m.duration_ms);
         const isCached = matchingOps.length > 0 && matchingOps.every((m) => m.cached);
-        const subgraphColor = sgName
-          ? SUBGRAPHS[sgName as SubgraphName]?.color
-          : undefined;
+        const subgraphColor = undefined;
 
         nodes.push({
           name: sgName || item.opName!,
@@ -445,6 +438,12 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
     }
     return [...names].sort();
   }, [treeNodes]);
+
+  // Dynamic color map for subgraphs present in the data
+  const subgraphColorMap = useMemo(
+    () => buildSubgraphColorMap(availableSubgraphs),
+    [availableSubgraphs],
+  );
 
   // SLO-based filters
   const [sloExceededFilter, setSloExceededFilter] = useState(false);
@@ -731,7 +730,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         </button>
         {showSubgraphFilters &&
           availableSubgraphs.map((name) => {
-            const color = (SUBGRAPHS as Record<string, { color: string }>)[name]?.color ?? "rgb(161, 161, 170)";
+            const color = subgraphColorMap.get(name) ?? DEFAULT_SUBGRAPH_COLOR;
             const isActive = selectedSubgraphs.has(name);
             const hasFilter = selectedSubgraphs.size > 0;
             return (
@@ -896,10 +895,10 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                     ) : null}
                     {node.type === "subgraph-op" ? (
                       <span className={`flex items-center gap-1.5 ${node.cached ? "opacity-50" : ""}`}>
-                        {node.subgraphColor && (
+                        {(node.subgraphName || node.subgraphColor) && (
                           <span
                             className="w-2 h-2 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: node.subgraphColor }}
+                            style={{ backgroundColor: (node.subgraphName && subgraphColorMap.get(node.subgraphName)) || node.subgraphColor || DEFAULT_SUBGRAPH_COLOR }}
                           />
                         )}
                         <span className="text-zinc-400">{node.name.replace("-subgraph", "")}</span>

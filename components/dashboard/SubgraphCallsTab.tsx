@@ -5,9 +5,9 @@ import type {
   QueryMetric,
   SubgraphOperationMetric,
 } from "@/lib/metrics-store";
-import { SUBGRAPHS, type SubgraphName } from "@/lib/gql-federation";
 import { percentile } from "@/lib/percentile";
 import type { MockSubgraphData } from "@/lib/mock-metrics";
+import { buildSubgraphColorMap, DEFAULT_SUBGRAPH_COLOR } from "@/lib/subgraph-colors";
 
 interface Props {
   queries: QueryMetric[];
@@ -53,6 +53,17 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
     });
   }, []);
 
+  // Dynamic color map based on subgraphs present in the data
+  const subgraphColorMap = useMemo(() => {
+    const names = new Set<string>();
+    if (mock?.[pctl]) {
+      for (const r of mock[pctl].rows) names.add(r.name);
+    } else {
+      for (const op of subgraphOps) names.add(op.subgraphName);
+    }
+    return buildSubgraphColorMap(names);
+  }, [mock, pctl, subgraphOps]);
+
   const { summary, subgraphRows } = useMemo(() => {
     // Mock data path — use pre-computed values directly
     if (mock?.[pctl]) {
@@ -78,7 +89,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
           color: r.color,
           callsPerReq: r.callsPerReq,
           durationPctl: r.durationPctl,
-          sloMs: SUBGRAPHS[r.name as SubgraphName]?.sloMs ?? 0,
+          sloMs: 0,
           callers: [...callerMap.entries()].map(([key, c]) => ({
             ...c,
             durationPctl: percentile(callerDurations.get(key) ?? [], pctl),
@@ -130,8 +141,8 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
     const subgraphRows: SubgraphSummary[] = [];
 
     for (const [sgName, sgUncachedOps] of uncachedBySubgraph) {
-      const color = SUBGRAPHS[sgName as SubgraphName]?.color ?? "rgb(161, 161, 170)";
-      const sloMs = SUBGRAPHS[sgName as SubgraphName]?.sloMs ?? 0;
+      const color = subgraphColorMap.get(sgName) ?? DEFAULT_SUBGRAPH_COLOR;
+      const sloMs = 0;
       const sgAllOps = allBySubgraph.get(sgName) ?? [];
 
       // Build unique callers (query + boundary pairs) with per-caller durations
@@ -172,7 +183,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
     subgraphRows.sort((a, b) => b.callsPerReq - a.callsPerReq);
 
     return { summary, subgraphRows };
-  }, [subgraphOps, pctl, mock]);
+  }, [subgraphOps, pctl, mock, subgraphColorMap]);
 
   if (subgraphRows.length === 0 && subgraphOps.length === 0) {
     return (
