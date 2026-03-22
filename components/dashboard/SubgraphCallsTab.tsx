@@ -33,8 +33,15 @@ interface SubgraphSummary {
   hasClientCalls: boolean;
 }
 
+type SloFilter = "exceeded" | "noSlo" | null;
+
 export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sloFilter, setSloFilter] = useState<SloFilter>(null);
+  const toggleSloFilter = useCallback(
+    (f: "exceeded" | "noSlo") => setSloFilter((prev) => (prev === f ? null : f)),
+    [],
+  );
 
   const toggleExpand = useCallback((name: string) => {
     setExpanded((prev) => {
@@ -159,10 +166,52 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
   }
 
   const pLabel = `p${pctl}`;
-  const maxCallsPerReq = Math.max(...subgraphRows.map((r) => r.callsPerReq), 1);
+
+  const filteredRows = useMemo(() => {
+    if (!sloFilter) return subgraphRows;
+    if (sloFilter === "exceeded") return subgraphRows.filter((r) => r.sloMs > 0 && r.durationPctl > r.sloMs);
+    return subgraphRows.filter((r) => r.sloMs === 0); // noSlo
+  }, [subgraphRows, sloFilter]);
+
+  const maxCallsPerReq = Math.max(...filteredRows.map((r) => r.callsPerReq), 1);
 
   return (
     <div className="space-y-4">
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs">
+        <span className="text-zinc-600 mr-1">Filter:</span>
+        <button
+          onClick={() => toggleSloFilter("exceeded")}
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+            sloFilter === "exceeded"
+              ? "border-red-500 text-red-300 bg-red-500/10"
+              : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+          }`}
+        >
+          <span className="w-2 h-2 rounded-full flex-shrink-0 bg-red-400" />
+          SLO Exceeded
+        </button>
+        <button
+          onClick={() => toggleSloFilter("noSlo")}
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+            sloFilter === "noSlo"
+              ? "border-amber-500 text-amber-300 bg-amber-500/10"
+              : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+          }`}
+        >
+          <span className="w-2 h-2 rounded-full flex-shrink-0 bg-amber-400" />
+          No SLO
+        </button>
+        {sloFilter && (
+          <button
+            onClick={() => setSloFilter(null)}
+            className="text-zinc-500 hover:text-zinc-300 ml-2 underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
       {/* Summary */}
       <div className="flex flex-wrap gap-6 text-sm">
         <div>
@@ -205,7 +254,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
             </tr>
           </thead>
           <tbody>
-            {subgraphRows.map((row) => {
+            {filteredRows.map((row) => {
               const isExpanded = expanded.has(row.name);
               const hasSlo = row.sloMs > 0;
               const sloRatio = hasSlo ? row.durationPctl / row.sloMs : 0;

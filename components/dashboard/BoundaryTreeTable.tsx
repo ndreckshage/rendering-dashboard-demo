@@ -423,6 +423,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
   const toggleLcpFilter = useCallback(() => setLcpFilter((prev) => !prev), []);
 
   // Subgraph filter — empty means "show all"
+  const [showSubgraphFilters, setShowSubgraphFilters] = useState(false);
   const [selectedSubgraphs, setSelectedSubgraphs] = useState<Set<string>>(new Set());
   const toggleSubgraphFilter = useCallback((name: string) => {
     setSelectedSubgraphs((prev) => {
@@ -518,18 +519,28 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
 
     const subgraphMatching = new Set<string>();
     if (hasSubgraphFilter) {
-      // In mock mode, derive from treeNodes; in live mode, from subgraphOps
+      // Collect matching boundaries
+      const directMatches = new Set<string>();
       if (mock) {
         for (const n of treeNodes) {
           if (n.type === "subgraph-op" && n.subgraphName && selectedSubgraphs.has(n.subgraphName)) {
-            subgraphMatching.add(n.boundaryPath);
+            directMatches.add(n.boundaryPath);
           }
         }
       } else {
         for (const op of subgraphOps) {
           if (selectedSubgraphs.has(op.subgraphName)) {
-            subgraphMatching.add(op.boundary_path);
+            directMatches.add(op.boundary_path);
           }
+        }
+      }
+      // Include ancestors so the tree hierarchy stays visible
+      for (const p of directMatches) {
+        subgraphMatching.add(p);
+        let candidate = getParentPath(p);
+        while (candidate !== null) {
+          subgraphMatching.add(candidate);
+          candidate = getParentPath(candidate);
         }
       }
     }
@@ -695,29 +706,42 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           No SLO
         </button>
         <span className="text-zinc-800 mx-0.5">|</span>
-        {Object.entries(SUBGRAPHS).map(([name, { color }]) => {
-          const isActive = selectedSubgraphs.has(name);
-          const hasFilter = selectedSubgraphs.size > 0;
-          return (
-            <button
-              key={name}
-              onClick={() => toggleSubgraphFilter(name)}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
-                isActive
-                  ? "border-zinc-500 text-zinc-200 bg-zinc-800"
-                  : hasFilter
-                    ? "border-transparent text-zinc-600 opacity-50 hover:opacity-80"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
-              }`}
-            >
-              <span
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: color }}
-              />
-              {name.replace("-subgraph", "")}
-            </button>
-          );
-        })}
+        <button
+          onClick={() => setShowSubgraphFilters((prev) => !prev)}
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+            selectedSubgraphs.size > 0
+              ? "border-zinc-500 text-zinc-200 bg-zinc-800"
+              : showSubgraphFilters
+                ? "border-zinc-600 text-zinc-300 bg-zinc-800/50"
+                : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+          }`}
+        >
+          Subgraphs {selectedSubgraphs.size > 0 && `(${selectedSubgraphs.size})`} {showSubgraphFilters ? "\u25BE" : "\u25B8"}
+        </button>
+        {showSubgraphFilters &&
+          Object.entries(SUBGRAPHS).map(([name, { color }]) => {
+            const isActive = selectedSubgraphs.has(name);
+            const hasFilter = selectedSubgraphs.size > 0;
+            return (
+              <button
+                key={name}
+                onClick={() => toggleSubgraphFilter(name)}
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+                  isActive
+                    ? "border-zinc-500 text-zinc-200 bg-zinc-800"
+                    : hasFilter
+                      ? "border-transparent text-zinc-600 opacity-50 hover:opacity-80"
+                      : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+                }`}
+              >
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: color }}
+                />
+                {name.replace("-subgraph", "")}
+              </button>
+            );
+          })}
         {(selectedSubgraphs.size > 0 || lcpFilter || phaseFilter || sloExceededFilter || noSloFilter) && (
           <button
             onClick={() => { clearSubgraphFilter(); setLcpFilter(false); setPhaseFilter(null); setSloExceededFilter(false); setNoSloFilter(false); }}
