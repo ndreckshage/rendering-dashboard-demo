@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import type {
   QueryMetric,
   SubgraphOperationMetric,
@@ -17,31 +17,60 @@ interface Props {
   mock?: Record<number, MockSubgraphData>;
 }
 
+interface CallerDetail {
+  queryName: string;
+  boundary: string;
+  isClient: boolean;
+}
+
 interface SubgraphSummary {
   name: string;
   color: string;
   callsPerReq: number;
   durationPctl: number;
   sloMs: number;
-  boundaries: string[];
-  queryNames: string[];
+  callers: CallerDetail[];
   hasClientCalls: boolean;
 }
 
 export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpand = useCallback((name: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
   const { summary, subgraphRows } = useMemo(() => {
     // Mock data path — use pre-computed values directly
     if (mock?.[pctl]) {
-      const rows: SubgraphSummary[] = mock[pctl].rows.map((r) => ({
-        name: r.name,
-        color: r.color,
-        callsPerReq: r.callsPerReq,
-        durationPctl: r.durationPctl,
-        sloMs: SUBGRAPHS[r.name as SubgraphName]?.sloMs ?? 0,
-        boundaries: r.operations.flatMap((op) => op.boundaries),
-        queryNames: r.operations.flatMap((op) => op.queryNames),
-        hasClientCalls: r.operations.some((op) => op.isClient),
-      }));
+      const rows: SubgraphSummary[] = mock[pctl].rows.map((r) => {
+        // Build callers from mock operation details
+        const callerMap = new Map<string, CallerDetail>();
+        for (const op of r.operations) {
+          for (let i = 0; i < op.queryNames.length; i++) {
+            const qn = op.queryNames[i];
+            const bp = op.boundaries[i] ?? op.boundaries[0] ?? "";
+            const key = `${qn}:${bp}`;
+            if (!callerMap.has(key)) {
+              callerMap.set(key, { queryName: qn, boundary: bp, isClient: op.isClient });
+            }
+          }
+        }
+        return {
+          name: r.name,
+          color: r.color,
+          callsPerReq: r.callsPerReq,
+          durationPctl: r.durationPctl,
+          sloMs: SUBGRAPHS[r.name as SubgraphName]?.sloMs ?? 0,
+          callers: [...callerMap.values()],
+          hasClientCalls: r.operations.some((op) => op.isClient),
+        };
+      });
       return { summary: mock[pctl].summary, subgraphRows: rows };
     }
 
@@ -90,8 +119,19 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
       const sloMs = SUBGRAPHS[sgName as SubgraphName]?.sloMs ?? 0;
       const sgAllOps = allBySubgraph.get(sgName) ?? [];
 
-      const boundarySet = new Set(sgAllOps.map((o) => o.boundary_path));
-      const querySet = new Set(sgAllOps.map((o) => o.queryName));
+      // Build unique callers (query + boundary pairs)
+      const callerMap = new Map<string, CallerDetail>();
+      for (const op of sgAllOps) {
+        const key = `${op.queryName}:${op.boundary_path}`;
+        if (!callerMap.has(key)) {
+          callerMap.set(key, {
+            queryName: op.queryName,
+            boundary: op.boundary_path,
+            isClient: op.phase === "csr",
+          });
+        }
+      }
+
       const durations = sgUncachedOps.map((o) => o.duration_ms);
 
       subgraphRows.push({
@@ -100,8 +140,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
         callsPerReq: Math.round((sgUncachedOps.length / numRequests) * 10) / 10,
         durationPctl: percentile(durations, pctl),
         sloMs,
-        boundaries: [...boundarySet],
-        queryNames: [...querySet],
+        callers: [...callerMap.values()],
         hasClientCalls: sgAllOps.some((o) => o.phase === "csr"),
       });
     }
@@ -167,6 +206,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
           </thead>
           <tbody>
             {subgraphRows.map((row) => {
+              const isExpanded = expanded.has(row.name);
               const hasSlo = row.sloMs > 0;
               const sloRatio = hasSlo ? row.durationPctl / row.sloMs : 0;
               const statusColor = !hasSlo
@@ -186,50 +226,108 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
               const barWidth = Math.max(2, (row.callsPerReq / maxCallsPerReq) * 100);
 
               return (
-                <tr
+                <SubgraphRow
                   key={row.name}
-                  className="border-b border-zinc-800/50 hover:bg-zinc-800/30"
-                >
-                  <td className="py-1.5 px-2">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: row.color }}
-                      />
-                      <span className="text-zinc-200">{row.name.replace("-subgraph", "")}</span>
-                      {row.hasClientCalls && (
-                        <span className="text-xs bg-purple-900/30 text-purple-400 rounded px-1 py-0.5">
-                          client
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="text-right py-1.5 px-2 text-zinc-300 font-medium">{row.callsPerReq}</td>
-                  <td className="text-right py-1.5 px-2 text-zinc-300">{row.durationPctl}ms</td>
-                  <td className={`text-right py-1.5 px-2 ${hasSlo ? "text-zinc-500" : "text-amber-500/70 italic"}`}>
-                    {hasSlo ? `${row.sloMs}ms` : "none"}
-                  </td>
-                  <td className={`text-center py-1.5 px-2 ${statusColor}`}>
-                    {statusIcon}
-                  </td>
-                  <td className="py-1.5 px-2">
-                    <div className="flex items-center h-4">
-                      <div
-                        className="h-2.5 rounded-sm"
-                        style={{
-                          width: `${barWidth}%`,
-                          backgroundColor: row.color,
-                          minWidth: "4px",
-                        }}
-                      />
-                    </div>
-                  </td>
-                </tr>
+                  row={row}
+                  isExpanded={isExpanded}
+                  barWidth={barWidth}
+                  hasSlo={hasSlo}
+                  statusColor={statusColor}
+                  statusIcon={statusIcon}
+                  onToggle={() => toggleExpand(row.name)}
+                />
               );
             })}
           </tbody>
         </table>
       </div>
     </div>
+  );
+}
+
+function SubgraphRow({
+  row,
+  isExpanded,
+  barWidth,
+  hasSlo,
+  statusColor,
+  statusIcon,
+  onToggle,
+}: {
+  row: SubgraphSummary;
+  isExpanded: boolean;
+  barWidth: number;
+  hasSlo: boolean;
+  statusColor: string;
+  statusIcon: string;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <tr
+        className="border-b border-zinc-800/50 hover:bg-zinc-800/30 cursor-pointer"
+        onClick={onToggle}
+      >
+        <td className="py-1.5 px-2">
+          <div className="flex items-center gap-2">
+            <button className="text-zinc-500 hover:text-zinc-300 w-4 text-center flex-shrink-0">
+              {isExpanded ? "\u25BE" : "\u25B8"}
+            </button>
+            <span
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+              style={{ backgroundColor: row.color }}
+            />
+            <span className="text-zinc-200">{row.name.replace("-subgraph", "")}</span>
+            {row.hasClientCalls && (
+              <span className="text-xs bg-purple-900/30 text-purple-400 rounded px-1 py-0.5">
+                client
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="text-right py-1.5 px-2 text-zinc-300 font-medium">{row.callsPerReq}</td>
+        <td className="text-right py-1.5 px-2 text-zinc-300">{row.durationPctl}ms</td>
+        <td className={`text-right py-1.5 px-2 ${hasSlo ? "text-zinc-500" : "text-amber-500/70 italic"}`}>
+          {hasSlo ? `${row.sloMs}ms` : "none"}
+        </td>
+        <td className={`text-center py-1.5 px-2 ${statusColor}`}>
+          {statusIcon}
+        </td>
+        <td className="py-1.5 px-2">
+          <div className="flex items-center h-4">
+            <div
+              className="h-2.5 rounded-sm"
+              style={{
+                width: `${barWidth}%`,
+                backgroundColor: row.color,
+                minWidth: "4px",
+              }}
+            />
+          </div>
+        </td>
+      </tr>
+      {isExpanded &&
+        row.callers.map((caller) => (
+          <tr
+            key={`${caller.queryName}:${caller.boundary}`}
+            className="border-b border-zinc-800/30 bg-zinc-900/50"
+          >
+            <td className="py-1 px-2" colSpan={2}>
+              <div className="flex items-center gap-1.5 pl-9">
+                <span className="text-zinc-600">&#x2514;</span>
+                <span className="text-teal-400 text-xs">{caller.queryName}</span>
+                <span className="text-zinc-600 text-xs">&rarr;</span>
+                <span className="text-zinc-400 text-xs">{caller.boundary.split(".").pop()}</span>
+                {caller.isClient && (
+                  <span className="text-xs bg-purple-900/30 text-purple-400 rounded px-1 py-0.5">
+                    client
+                  </span>
+                )}
+              </div>
+            </td>
+            <td colSpan={4} />
+          </tr>
+        ))}
+    </>
   );
 }

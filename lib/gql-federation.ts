@@ -11,7 +11,7 @@
 export const SUBGRAPHS = {
   "product-subgraph": { color: "rgb(59, 130, 246)", sloMs: 100 }, // blue
   "pricing-subgraph": { color: "rgb(139, 92, 246)", sloMs: 500 }, // violet
-  "inventory-subgraph": { color: "rgb(245, 158, 11)", sloMs: 75 }, // amber
+  "inventory-subgraph": { color: "rgb(245, 158, 11)", sloMs: 0 }, // amber — no SLO set
   "reviews-subgraph": { color: "rgb(34, 197, 94)", sloMs: 560 }, // green
   "cms-subgraph": { color: "rgb(249, 115, 22)", sloMs: 150 }, // orange
   "reco-subgraph": { color: "rgb(236, 72, 153)", sloMs: 290 }, // pink
