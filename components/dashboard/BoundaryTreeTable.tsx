@@ -435,6 +435,17 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
   }, []);
   const clearSubgraphFilter = useCallback(() => setSelectedSubgraphs(new Set()), []);
 
+  // Derive available subgraphs dynamically from the actual data
+  const availableSubgraphs = useMemo(() => {
+    const names = new Set<string>();
+    for (const n of treeNodes) {
+      if (n.type === "subgraph-op" && n.subgraphName) {
+        names.add(n.subgraphName);
+      }
+    }
+    return [...names].sort();
+  }, [treeNodes]);
+
   // SLO-based filters
   const [sloExceededFilter, setSloExceededFilter] = useState(false);
   const toggleSloExceededFilter = useCallback(() => setSloExceededFilter((prev) => !prev), []);
@@ -719,7 +730,8 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           Subgraphs {selectedSubgraphs.size > 0 && `(${selectedSubgraphs.size})`} {showSubgraphFilters ? "\u25BE" : "\u25B8"}
         </button>
         {showSubgraphFilters &&
-          Object.entries(SUBGRAPHS).map(([name, { color }]) => {
+          availableSubgraphs.map((name) => {
+            const color = (SUBGRAPHS as Record<string, { color: string }>)[name]?.color ?? "rgb(161, 161, 170)";
             const isActive = selectedSubgraphs.has(name);
             const hasFilter = selectedSubgraphs.size > 0;
             return (
