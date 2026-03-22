@@ -16,7 +16,6 @@ import type { NavigationTiming } from "./client-metrics-store";
 import {
   SUBGRAPH_OPERATIONS,
   SUBGRAPHS,
-  GQL_QUERIES,
   type SubgraphName,
 } from "./gql-federation";
 import type {
@@ -541,7 +540,6 @@ function computeTree(
         queryDuration = Math.max(0, ...opDurations);
       }
       const isCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
-      const querySlo = GQL_QUERIES[q.queryName]?.sloMs ?? 500;
 
       nodes.push({
         name: q.queryName,
@@ -554,41 +552,54 @@ function computeTree(
         renderCostPctl: 0,
         blockedPctl: 0,
         totalPctl: isCached ? 0 : queryDuration,
-        slo: querySlo,
+        slo: 0,
         lcpCritical: false,
         cached: isCached,
         hasChildren: false,
         phase: b.phase,
       });
 
-      // Op nodes
-      for (let oi = 0; oi < q.ops.length; oi++) {
-        const op = q.ops[oi];
+      // Group ops by subgraph
+      const opsBySubgraph = new Map<string, { durations: number[]; cached: boolean }>();
+      for (const op of q.ops) {
         const { duration, cached } = resolveOpDuration(op.value, pctl);
-        const opSlo = SUBGRAPH_OPERATIONS[op.opName]?.sloMs ?? 100;
-        const subgraphColor = SUBGRAPHS[op.subgraphName as SubgraphName]?.color;
-
         if (cached) cachedOps++; else uncachedOps++;
 
+        const existing = opsBySubgraph.get(op.subgraphName);
+        if (existing) {
+          existing.durations.push(duration);
+          existing.cached = existing.cached && cached;
+        } else {
+          opsBySubgraph.set(op.subgraphName, { durations: [duration], cached });
+        }
+      }
+
+      let oi = 0;
+      for (const [sgName, sgData] of opsBySubgraph) {
+        const sgSlo = SUBGRAPHS[sgName as SubgraphName]?.sloMs ?? 0;
+        const subgraphColor = SUBGRAPHS[sgName as SubgraphName]?.color;
+        const maxDuration = Math.max(0, ...sgData.durations);
+
         nodes.push({
-          name: op.opName,
+          name: sgName,
           path: `${b.path}.query${qi > 0 ? qi : ""}.op${oi > 0 ? oi : ""}`,
           depth: depth + 2,
           type: "subgraph-op",
           boundaryPath: b.path,
           wallStartPctl: 0,
-          fetchPctl: cached ? 0 : duration,
+          fetchPctl: sgData.cached ? 0 : maxDuration,
           renderCostPctl: 0,
           blockedPctl: 0,
-          totalPctl: cached ? 0 : duration,
-          slo: opSlo,
+          totalPctl: sgData.cached ? 0 : maxDuration,
+          slo: sgSlo,
           lcpCritical: false,
-          cached,
-          subgraphName: op.subgraphName,
+          cached: sgData.cached,
+          subgraphName: sgName,
           subgraphColor,
           hasChildren: false,
           phase: b.phase,
         });
+        oi++;
       }
     }
   }

@@ -9,15 +9,15 @@
 // --- Subgraph service definitions ---
 
 export const SUBGRAPHS = {
-  "product-subgraph": { color: "rgb(59, 130, 246)" }, // blue
-  "pricing-subgraph": { color: "rgb(139, 92, 246)" }, // violet
-  "inventory-subgraph": { color: "rgb(245, 158, 11)" }, // amber
-  "reviews-subgraph": { color: "rgb(34, 197, 94)" }, // green
-  "cms-subgraph": { color: "rgb(249, 115, 22)" }, // orange
-  "reco-subgraph": { color: "rgb(236, 72, 153)" }, // pink
-  "experimentation-subgraph": { color: "rgb(99, 102, 241)" }, // indigo
-  "media-subgraph": { color: "rgb(6, 182, 212)" }, // cyan
-  "user-subgraph": { color: "rgb(168, 85, 247)" }, // purple
+  "product-subgraph": { color: "rgb(59, 130, 246)", sloMs: 100 }, // blue
+  "pricing-subgraph": { color: "rgb(139, 92, 246)", sloMs: 500 }, // violet
+  "inventory-subgraph": { color: "rgb(245, 158, 11)", sloMs: 75 }, // amber
+  "reviews-subgraph": { color: "rgb(34, 197, 94)", sloMs: 560 }, // green
+  "cms-subgraph": { color: "rgb(249, 115, 22)", sloMs: 150 }, // orange
+  "reco-subgraph": { color: "rgb(236, 72, 153)", sloMs: 290 }, // pink
+  "experimentation-subgraph": { color: "rgb(99, 102, 241)", sloMs: 65 }, // indigo
+  "media-subgraph": { color: "rgb(6, 182, 212)", sloMs: 90 }, // cyan
+  "user-subgraph": { color: "rgb(168, 85, 247)", sloMs: 150 }, // purple
 } as const;
 
 export type SubgraphName = keyof typeof SUBGRAPHS;
@@ -65,66 +65,51 @@ export const SUBGRAPH_OPERATIONS: Record<string, SubgraphOperationDef> = {
 
 export interface GqlQueryDef {
   operations: string[];
-  sloMs: number;
 }
 
 export const GQL_QUERIES: Record<string, GqlQueryDef> = {
   getExperimentContext: {
     operations: ["experiment.context"],
-    sloMs: 75,
   },
   getNavigation: {
     operations: ["cms.navigation"],
-    sloMs: 150,
   },
   getContentLayout: {
     operations: ["cms.layout"],
-    sloMs: 125,
   },
   getBreadcrumbs: {
     operations: ["category.tree"],
-    sloMs: 125,
   },
   getHeroImage: {
     operations: ["media.heroImage"],
-    sloMs: 65,
   },
   getThumbnails: {
     operations: ["media.thumbnails"],
-    sloMs: 90,
   },
   // Shared between Title + Bullets + Options boundaries — second/third calls are React cache() hits
   getProductInfo: {
     operations: ["product.core", "product.bullets"],
-    sloMs: 100,
   },
   getProductPricing: {
     operations: ["pricing.current", "inventory.availability", "reviews.summary"],
-    sloMs: 750,
   },
   getRecommendations: {
     operations: ["reco.personalized", "product.cards", "pricing.batch"],
-    sloMs: 375,
   },
   getReviews: {
     operations: ["reviews.list"],
-    sloMs: 625,
   },
   getFooter: {
     operations: ["cms.footer"],
-    sloMs: 100,
   },
   // Client-side queries (post-hydration)
   getUserCart: {
     operations: ["user.cart"],
-    sloMs: 150,
   },
   getUserFavorites: {
     operations: ["user.favorites"],
-    sloMs: 125,
   },
   getReviewsQA: {
     operations: ["reviews.qa"],
-    sloMs: 375,
   },
 };
