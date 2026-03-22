@@ -7,9 +7,8 @@ import type {
   SubgraphOperationMetric,
 } from "@/lib/metrics-store";
 import {
-  GQL_QUERIES,
-  SUBGRAPH_OPERATIONS,
   SUBGRAPHS,
+  type SubgraphName,
 } from "@/lib/gql-federation";
 import { percentile, median as medianUtil } from "@/lib/percentile";
 import type { MockTreeData } from "@/lib/mock-metrics";
@@ -116,13 +115,13 @@ function buildTreeFromMetrics(
     queriesByBoundary.set(q.boundary_path, set);
   }
 
-  // 4. Collect unique subgraph ops per (boundary, query)
-  const opsByBoundaryQuery = new Map<string, Map<string, string>>();
+  // 4. Collect unique subgraphs per (boundary, query) — grouped by subgraph, not individual op
+  const subgraphsByBoundaryQuery = new Map<string, Set<string>>();
   for (const op of subgraphOps) {
     const key = `${op.boundary_path}:${op.queryName}`;
-    const opsMap = opsByBoundaryQuery.get(key) ?? new Map();
-    opsMap.set(op.operationName, op.subgraphName);
-    opsByBoundaryQuery.set(key, opsMap);
+    const sgSet = subgraphsByBoundaryQuery.get(key) ?? new Set();
+    sgSet.add(op.subgraphName);
+    subgraphsByBoundaryQuery.set(key, sgSet);
   }
 
   // 5. DFS walk the tree to produce correctly ordered items
@@ -157,18 +156,18 @@ function buildTreeFromMetrics(
             phase: phaseByPath.get(boundaryPath),
           });
 
-          const opsKey = `${boundaryPath}:${queryName}`;
-          const ops = opsByBoundaryQuery.get(opsKey);
-          if (ops) {
+          const sgKey = `${boundaryPath}:${queryName}`;
+          const sgs = subgraphsByBoundaryQuery.get(sgKey);
+          if (sgs) {
             let opIdx = 0;
-            for (const [opName, subgraphName] of ops) {
+            for (const subgraphName of sgs) {
               items.push({
                 path: `${queryPath}.op${opIdx > 0 ? opIdx : ""}`,
-                name: opName,
+                name: subgraphName,
                 type: "subgraph-op",
                 boundaryPath,
                 queryName,
-                opName,
+                opName: subgraphName,
                 subgraphName,
                 phase: phaseByPath.get(boundaryPath),
               });
@@ -189,27 +188,6 @@ function buildTreeFromMetrics(
 }
 
 const median = medianUtil;
-
-// Boundary-level SLOs
-const BOUNDARY_SLOS: Record<string, number> = {
-  Layout: 75,
-  "Layout.Nav": 250,
-  "Layout.Content": 150,
-  "Layout.Content.Breadcrumbs": 150,
-  "Layout.Content.Main.Hero": 75,
-  "Layout.Content.Main.Thumbnails": 150,
-  "Layout.Content.Main.Title": 125,
-  "Layout.Content.Main.Pricing": 750,
-  "Layout.Content.Main.Bullets": 100,
-  "Layout.Content.Main.Options": 100,
-  "Layout.Content.Main.AddToCart": 25,
-  "Layout.Content.Carousels": 500,
-  "Layout.Content.Reviews": 690,
-  "Layout.Content.Reviews.ReviewsQA": 400,
-  "Layout.Footer": 125,
-  "Layout.Nav.CartIndicator": 200,
-  "Layout.Content.Main.Hero.FavoriteButton": 150,
-};
 
 interface TreeNode {
   name: string;
@@ -281,14 +259,6 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
       queryByKey.set(key, list);
     }
 
-    const opByKey = new Map<string, SubgraphOperationMetric[]>();
-    for (const op of subgraphOps) {
-      const key = `${op.boundary_path}:${op.queryName}:${op.operationName}`;
-      const list = opByKey.get(key) ?? [];
-      list.push(op);
-      opByKey.set(key, list);
-    }
-
     // Compute depth for each boundary based on tree hierarchy
     const depthMap = new Map<string, number>();
     const allBoundaryPathsSet = new Set(
@@ -348,7 +318,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           renderCostPctl: percentile(renderCosts, pctl),
           blockedPctl: 0,
           totalPctl: percentile(durations, pctl),
-          slo: BOUNDARY_SLOS[item.boundaryPath] ?? 500,
+          slo: 0,
           lcpCritical: item.lcpCritical ?? false,
           cached: false,
           hasChildren: boundaryHasChildren.has(item.boundaryPath),
@@ -358,7 +328,6 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         const key = `${item.boundaryPath}:${item.queryName}`;
         const metrics = queryByKey.get(key) ?? [];
         const durations = metrics.map((m) => m.duration_ms);
-        const querySlo = GQL_QUERIES[item.queryName!]?.sloMs ?? 500;
         const isCached = metrics.length > 0 && metrics.every((m) => m.fullyCached);
 
         nodes.push({
@@ -372,24 +341,33 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           renderCostPctl: 0,
           blockedPctl: 0,
           totalPctl: isCached ? 0 : percentile(durations, pctl),
-          slo: querySlo,
+          slo: 0,
           lcpCritical: false,
           cached: isCached,
           hasChildren: false,
           phase: item.phase,
         });
       } else {
-        const key = `${item.boundaryPath}:${item.queryName}:${item.opName}`;
-        const metrics = opByKey.get(key) ?? [];
-        const durations = metrics.map((m) => m.duration_ms);
-        const opSlo = SUBGRAPH_OPERATIONS[item.opName!]?.sloMs ?? 100;
-        const isCached = metrics.length > 0 && metrics.every((m) => m.cached);
-        const subgraphColor = item.subgraphName
-          ? SUBGRAPHS[item.subgraphName as keyof typeof SUBGRAPHS]?.color
+        // Group ops by subgraph — aggregate all ops for this subgraph under this query
+        const sgName = item.subgraphName;
+        const sgSlo = sgName
+          ? SUBGRAPHS[sgName as SubgraphName]?.sloMs ?? 0
+          : 0;
+        // Collect all ops for this subgraph under this boundary+query
+        const matchingOps: SubgraphOperationMetric[] = [];
+        for (const op of subgraphOps) {
+          if (op.boundary_path === item.boundaryPath && op.queryName === item.queryName && op.subgraphName === sgName) {
+            matchingOps.push(op);
+          }
+        }
+        const durations = matchingOps.map((m) => m.duration_ms);
+        const isCached = matchingOps.length > 0 && matchingOps.every((m) => m.cached);
+        const subgraphColor = sgName
+          ? SUBGRAPHS[sgName as SubgraphName]?.color
           : undefined;
 
         nodes.push({
-          name: item.opName!,
+          name: sgName || item.opName!,
           path: item.path,
           depth,
           type: "subgraph-op",
@@ -399,7 +377,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           renderCostPctl: 0,
           blockedPctl: 0,
           totalPctl: isCached ? 0 : percentile(durations, pctl),
-          slo: opSlo,
+          slo: sgSlo,
           lcpCritical: false,
           cached: isCached,
           subgraphName: item.subgraphName,
@@ -445,6 +423,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
   const toggleLcpFilter = useCallback(() => setLcpFilter((prev) => !prev), []);
 
   // Subgraph filter — empty means "show all"
+  const [showSubgraphFilters, setShowSubgraphFilters] = useState(false);
   const [selectedSubgraphs, setSelectedSubgraphs] = useState<Set<string>>(new Set());
   const toggleSubgraphFilter = useCallback((name: string) => {
     setSelectedSubgraphs((prev) => {
@@ -455,6 +434,44 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
     });
   }, []);
   const clearSubgraphFilter = useCallback(() => setSelectedSubgraphs(new Set()), []);
+
+  // SLO-based filters
+  const [sloExceededFilter, setSloExceededFilter] = useState(false);
+  const toggleSloExceededFilter = useCallback(() => setSloExceededFilter((prev) => !prev), []);
+  const [noSloFilter, setNoSloFilter] = useState(false);
+  const toggleNoSloFilter = useCallback(() => setNoSloFilter((prev) => !prev), []);
+
+  // Compute boundaries with subgraphs exceeding SLO
+  const sloExceededPaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const n of treeNodes) {
+      if (n.type === "subgraph-op" && !n.cached && n.slo > 0 && n.fetchPctl > n.slo) {
+        paths.add(n.boundaryPath);
+        let candidate = getParentPath(n.boundaryPath);
+        while (candidate !== null) {
+          paths.add(candidate);
+          candidate = getParentPath(candidate);
+        }
+      }
+    }
+    return paths;
+  }, [treeNodes]);
+
+  // Compute boundaries with subgraphs that have no SLO
+  const noSloPaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const n of treeNodes) {
+      if (n.type === "subgraph-op" && !n.cached && n.slo === 0) {
+        paths.add(n.boundaryPath);
+        let candidate = getParentPath(n.boundaryPath);
+        while (candidate !== null) {
+          paths.add(candidate);
+          candidate = getParentPath(candidate);
+        }
+      }
+    }
+    return paths;
+  }, [treeNodes]);
 
   // Compute LCP path boundary set (LCP boundaries + ancestors)
   const lcpBoundaryPaths = useMemo(() => {
@@ -498,22 +515,32 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
   // Compute which boundaries match the subgraph filter
   const filteredBoundaryPaths = useMemo(() => {
     const hasSubgraphFilter = selectedSubgraphs.size > 0;
-    if (!hasSubgraphFilter && !lcpFilter && !phaseFilter) return null; // no filter
+    if (!hasSubgraphFilter && !lcpFilter && !phaseFilter && !sloExceededFilter && !noSloFilter) return null; // no filter
 
     const subgraphMatching = new Set<string>();
     if (hasSubgraphFilter) {
-      // In mock mode, derive from treeNodes; in live mode, from subgraphOps
+      // Collect matching boundaries
+      const directMatches = new Set<string>();
       if (mock) {
         for (const n of treeNodes) {
           if (n.type === "subgraph-op" && n.subgraphName && selectedSubgraphs.has(n.subgraphName)) {
-            subgraphMatching.add(n.boundaryPath);
+            directMatches.add(n.boundaryPath);
           }
         }
       } else {
         for (const op of subgraphOps) {
           if (selectedSubgraphs.has(op.subgraphName)) {
-            subgraphMatching.add(op.boundary_path);
+            directMatches.add(op.boundary_path);
           }
+        }
+      }
+      // Include ancestors so the tree hierarchy stays visible
+      for (const p of directMatches) {
+        subgraphMatching.add(p);
+        let candidate = getParentPath(p);
+        while (candidate !== null) {
+          subgraphMatching.add(candidate);
+          candidate = getParentPath(candidate);
         }
       }
     }
@@ -532,9 +559,19 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         ? new Set([...result].filter((p) => phaseBoundaryPaths.has(p)))
         : phaseBoundaryPaths;
     }
+    if (sloExceededFilter) {
+      result = result
+        ? new Set([...result].filter((p) => sloExceededPaths.has(p)))
+        : sloExceededPaths;
+    }
+    if (noSloFilter) {
+      result = result
+        ? new Set([...result].filter((p) => noSloPaths.has(p)))
+        : noSloPaths;
+    }
 
     return result;
-  }, [selectedSubgraphs, subgraphOps, lcpFilter, lcpBoundaryPaths, phaseFilter, phaseBoundaryPaths, mock, treeNodes]);
+  }, [selectedSubgraphs, subgraphOps, lcpFilter, lcpBoundaryPaths, phaseFilter, phaseBoundaryPaths, sloExceededFilter, sloExceededPaths, noSloFilter, noSloPaths, mock, treeNodes]);
 
   // Call count summary stats (uncached = actual network calls)
   const callSummary = useMemo(() => {
@@ -646,32 +683,68 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           LCP Path
         </button>
         <span className="text-zinc-800 mx-0.5">|</span>
-        {Object.entries(SUBGRAPHS).map(([name, { color }]) => {
-          const isActive = selectedSubgraphs.has(name);
-          const hasFilter = selectedSubgraphs.size > 0;
-          return (
-            <button
-              key={name}
-              onClick={() => toggleSubgraphFilter(name)}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
-                isActive
-                  ? "border-zinc-500 text-zinc-200 bg-zinc-800"
-                  : hasFilter
-                    ? "border-transparent text-zinc-600 opacity-50 hover:opacity-80"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
-              }`}
-            >
-              <span
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: color }}
-              />
-              {name.replace("-subgraph", "")}
-            </button>
-          );
-        })}
-        {(selectedSubgraphs.size > 0 || lcpFilter || phaseFilter) && (
+        <button
+          onClick={toggleSloExceededFilter}
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+            sloExceededFilter
+              ? "border-red-500 text-red-300 bg-red-500/10"
+              : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+          }`}
+        >
+          <span className="w-2 h-2 rounded-full flex-shrink-0 bg-red-400" />
+          SLO Exceeded
+        </button>
+        <button
+          onClick={toggleNoSloFilter}
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+            noSloFilter
+              ? "border-amber-500 text-amber-300 bg-amber-500/10"
+              : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+          }`}
+        >
+          <span className="w-2 h-2 rounded-full flex-shrink-0 bg-amber-400" />
+          No SLO
+        </button>
+        <span className="text-zinc-800 mx-0.5">|</span>
+        <button
+          onClick={() => setShowSubgraphFilters((prev) => !prev)}
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+            selectedSubgraphs.size > 0
+              ? "border-zinc-500 text-zinc-200 bg-zinc-800"
+              : showSubgraphFilters
+                ? "border-zinc-600 text-zinc-300 bg-zinc-800/50"
+                : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+          }`}
+        >
+          Subgraphs {selectedSubgraphs.size > 0 && `(${selectedSubgraphs.size})`} {showSubgraphFilters ? "\u25BE" : "\u25B8"}
+        </button>
+        {showSubgraphFilters &&
+          Object.entries(SUBGRAPHS).map(([name, { color }]) => {
+            const isActive = selectedSubgraphs.has(name);
+            const hasFilter = selectedSubgraphs.size > 0;
+            return (
+              <button
+                key={name}
+                onClick={() => toggleSubgraphFilter(name)}
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+                  isActive
+                    ? "border-zinc-500 text-zinc-200 bg-zinc-800"
+                    : hasFilter
+                      ? "border-transparent text-zinc-600 opacity-50 hover:opacity-80"
+                      : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+                }`}
+              >
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: color }}
+                />
+                {name.replace("-subgraph", "")}
+              </button>
+            );
+          })}
+        {(selectedSubgraphs.size > 0 || lcpFilter || phaseFilter || sloExceededFilter || noSloFilter) && (
           <button
-            onClick={() => { clearSubgraphFilter(); setLcpFilter(false); setPhaseFilter(null); }}
+            onClick={() => { clearSubgraphFilter(); setLcpFilter(false); setPhaseFilter(null); setSloExceededFilter(false); setNoSloFilter(false); }}
             className="text-zinc-500 hover:text-zinc-300 ml-2 underline"
           >
             Clear
@@ -708,7 +781,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         <thead>
           <tr className="text-zinc-500 text-xs border-b border-zinc-800">
             <th className="text-left py-2 px-2 font-normal" style={{ width: "30%" }}>
-              Boundary / Query / Subgraph Op
+              Boundary / Query / Subgraph
             </th>
             <th className="text-right py-2 px-2 font-normal" style={{ width: "9%" }}>
               Wall Start
@@ -741,23 +814,32 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         </thead>
         <tbody>
           {visibleNodes.map((node) => {
-            const metricValue = node.type === "boundary" ? node.totalPctl : node.fetchPctl;
-            const sloRatio = node.cached ? 0 : metricValue / node.slo;
+            const isSubgraphOp = node.type === "subgraph-op";
+            const hasSlo = isSubgraphOp && node.slo > 0;
+            const noSlo = isSubgraphOp && !hasSlo && !node.cached;
+            const sloRatio = hasSlo && !node.cached ? node.fetchPctl / node.slo : 0;
             const statusColor =
-              node.cached
+              !isSubgraphOp || node.cached
                 ? "text-zinc-600"
-                : sloRatio > 1
-                  ? "text-red-400"
-                  : sloRatio > 0.8
-                    ? "text-yellow-400"
-                    : "text-green-400";
-            const statusIcon = node.cached
-              ? "\u2014"
-              : sloRatio > 1
-                ? "!!!"
-                : sloRatio > 0.8
-                  ? "!!"
-                  : "OK";
+                : noSlo
+                  ? "text-amber-500"
+                  : sloRatio > 1
+                    ? "text-red-400"
+                    : sloRatio > 0.8
+                      ? "text-yellow-400"
+                      : "text-green-400";
+            const statusIcon =
+              !isSubgraphOp
+                ? ""
+                : node.cached
+                  ? "\u2014"
+                  : noSlo
+                    ? "?"
+                    : sloRatio > 1
+                      ? "!!!"
+                      : sloRatio > 0.8
+                        ? "!!"
+                        : "OK";
 
             const blockedHighlight =
               node.blockedPctl > 0 && node.lcpCritical
@@ -808,12 +890,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                             style={{ backgroundColor: node.subgraphColor }}
                           />
                         )}
-                        <span className="text-zinc-500">{node.name}</span>
-                        {node.subgraphName && (
-                          <span className="text-zinc-700 text-xs">
-                            ({node.subgraphName.replace("-subgraph", "")})
-                          </span>
-                        )}
+                        <span className="text-zinc-400">{node.name.replace("-subgraph", "")}</span>
                         {node.cached && (
                           <span className="text-xs text-cyan-600 font-medium">cached</span>
                         )}
@@ -866,8 +943,12 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                       ? "0ms"
                       : `${node.fetchPctl}ms`}
                 </td>
-                <td className="text-right py-1.5 px-2 text-zinc-500">
-                  {node.cached ? "" : `${node.slo}ms`}
+                <td className={`text-right py-1.5 px-2 ${noSlo ? "text-amber-500/70 italic" : "text-zinc-500"}`}>
+                  {isSubgraphOp && !node.cached
+                    ? hasSlo
+                      ? `${node.slo}ms`
+                      : "none"
+                    : ""}
                 </td>
                 <td className={`text-center py-1.5 px-2 ${statusColor}`}>
                   {statusIcon}
