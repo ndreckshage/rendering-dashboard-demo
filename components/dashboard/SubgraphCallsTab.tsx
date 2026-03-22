@@ -204,6 +204,13 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
     return subgraphRows.filter((r) => r.sloMs === 0); // noSlo
   }, [subgraphRows, sloFilter]);
 
+  const sloCounts = useMemo(() => {
+    const exceeded = subgraphRows.filter((r) => r.sloMs > 0 && r.durationPctl > r.sloMs).length;
+    const noSlo = subgraphRows.filter((r) => r.sloMs === 0).length;
+    const hasSlo = subgraphRows.filter((r) => r.sloMs > 0).length;
+    return { exceeded, noSlo, hasSlo };
+  }, [subgraphRows]);
+
   const maxCallsPerReq = Math.max(...filteredRows.map((r) => r.callsPerReq), 1);
 
   return (
@@ -239,7 +246,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
           }`}
         >
           <span className="w-2 h-2 rounded-full flex-shrink-0 bg-red-400" />
-          SLO Exceeded
+          SLO Exceeded ({sloCounts.exceeded})
         </button>
         <button
           onClick={() => toggleSloFilter("noSlo")}
@@ -250,7 +257,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
           }`}
         >
           <span className="w-2 h-2 rounded-full flex-shrink-0 bg-amber-400" />
-          No SLO
+          No SLO ({sloCounts.noSlo})
         </button>
         <button
           onClick={() => toggleSloFilter("hasSlo")}
@@ -261,7 +268,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
           }`}
         >
           <span className="w-2 h-2 rounded-full flex-shrink-0 bg-green-400" />
-          Has SLO
+          Has SLO ({sloCounts.hasSlo})
         </button>
         {sloFilter && (
           <button
