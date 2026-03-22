@@ -207,7 +207,7 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
 
   return (
     <div className="space-y-4">
-      <TabDescription title="What does this measure?">
+      <TabDescription title="What does this measure?" storageKey="subgraphs">
         <p>
           This view counts how many times each backend service (subgraph) is called to render a single page
           load — <strong className="text-zinc-300">before any user interaction</strong> (scroll, click, tap).

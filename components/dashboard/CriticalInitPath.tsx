@@ -393,7 +393,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
 
   return (
     <div className="space-y-6 overflow-x-auto overflow-y-hidden md:overflow-x-hidden" style={{ minWidth: 0 }}>
-      <TabDescription title="What does this measure?">
+      <TabDescription title="What does this measure?" storageKey="waterfall">
         <p>
           This waterfall shows everything that happens to render the page <strong className="text-zinc-300">before
           any user interaction</strong> (scroll, click, tap). Think of it like a Core Web Vitals measurement

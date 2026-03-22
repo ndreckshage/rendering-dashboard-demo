@@ -664,7 +664,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
 
   return (
     <div className="overflow-x-auto">
-      <TabDescription title="What does this measure?">
+      <TabDescription title="What does this measure?" storageKey="tree">
         <p>
           This tree maps directly to the <strong className="text-zinc-300">React Suspense boundaries</strong> in
           the page. Each boundary is an independent loading unit — it can fetch data and render without waiting
