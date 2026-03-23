@@ -39,6 +39,7 @@ interface YamlOp {
 
 interface YamlQuery {
   duration?: PctlValue;
+  await?: boolean;
   ops: Record<string, PctlValue | YamlOp>;
 }
 
@@ -172,6 +173,8 @@ interface QueryInfo {
   queryName: string;
   boundaryPath: string;
   duration?: PctlValue;
+  /** When false, the boundary fires the fetch but does not suspend (prefetch). Default: true */
+  noAwait: boolean;
   ops: OpInfo[];
   phase: "ssr" | "csr";
 }
@@ -215,6 +218,7 @@ function collectBoundaryTree(
         queryName,
         boundaryPath: path,
         duration: query.duration,
+        noAwait: query.await === false,
         ops,
         phase: effectivePhase,
       });
@@ -287,19 +291,31 @@ function computeWaterfall(
       boundaryDurations.push({ boundary: b, queryDurationP50: 0, queryDurationPctl: 0, variance: 0 });
       continue;
     }
-    // Use the first (primary) query's duration
-    const q = b.queries[0];
-    let dP50: number;
-    let dPctl: number;
-    if (q.duration !== undefined) {
-      dP50 = atPctl(q.duration, 50);
-      dPctl = atPctl(q.duration, pctl);
-    } else {
-      // Derive from max of ops
-      const opDurationsP50 = q.ops.map((op) => resolveOpDuration(op.value, 50).duration);
-      const opDurationsPctl = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
-      dP50 = Math.max(0, ...opDurationsP50);
-      dPctl = Math.max(0, ...opDurationsPctl);
+    // Use the max duration across all awaited queries in this boundary
+    // (noAwait queries start the fetch but don't suspend, so they don't
+    // contribute to the boundary's fetch duration)
+    let dP50 = 0;
+    let dPctl = 0;
+    for (const q of b.queries) {
+      if (q.noAwait) continue;
+      // Skip fully-cached queries — they don't suspend the boundary.
+      // (Remaining prefetch time for cached queries is handled in schedule().)
+      const allCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
+      if (allCached) continue;
+      let qP50: number;
+      let qPctl: number;
+      if (q.duration !== undefined) {
+        qP50 = atPctl(q.duration, 50);
+        qPctl = atPctl(q.duration, pctl);
+      } else {
+        // Derive from max of ops
+        const opDurationsP50 = q.ops.map((op) => resolveOpDuration(op.value, 50).duration);
+        const opDurationsPctl = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
+        qP50 = Math.max(0, ...opDurationsP50);
+        qPctl = Math.max(0, ...opDurationsPctl);
+      }
+      dP50 = Math.max(dP50, qP50);
+      dPctl = Math.max(dPctl, qPctl);
     }
     boundaryDurations.push({
       boundary: b,
@@ -341,6 +357,10 @@ function computeWaterfall(
   }
   const scheduled: ScheduledBoundary[] = [];
 
+  // Track in-flight prefetches: queryName → { wallStart when kicked off, fetch duration }
+  // Used to compute remaining time for cached descendants.
+  const prefetchRegistry = new Map<string, { wallStart: number; duration: number }>();
+
   function schedule(
     nodes: BoundaryInfo[],
     parentFetchEnd: number,
@@ -348,9 +368,42 @@ function computeWaterfall(
   ): number {
     let thread = threadAvailable;
     for (const b of nodes) {
-      const fetchDuration = fetchByPath.get(b.path) ?? 0;
-      const renderCost = atPctl(b.renderCost, pctl, 1);
       const fetchStart = parentFetchEnd;
+
+      // Register any noAwait (prefetch) queries kicked off by this boundary
+      for (const q of b.queries) {
+        if (!q.noAwait) continue;
+        let prefetchDuration: number;
+        if (q.duration !== undefined) {
+          prefetchDuration = atPctl(q.duration, pctl);
+        } else {
+          const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
+          prefetchDuration = Math.max(0, ...opDurations);
+        }
+        // Use the fudged duration if the boundary is in fetchByPath, otherwise raw
+        prefetchRegistry.set(q.queryName, { wallStart: fetchStart, duration: prefetchDuration });
+      }
+
+      // Compute effective fetch duration, accounting for cached queries
+      // that may have a prefetch in-flight
+      let fetchDuration = fetchByPath.get(b.path) ?? 0;
+      // If the boundary's own awaited-query duration is 0 (e.g. all queries are
+      // cached), check if any cached query has remaining prefetch time
+      if (fetchDuration === 0) {
+        for (const q of b.queries) {
+          if (q.noAwait) continue;
+          const allCached = q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
+          if (allCached) {
+            const prefetch = prefetchRegistry.get(q.queryName);
+            if (prefetch) {
+              const remaining = Math.max(0, (prefetch.wallStart + prefetch.duration) - fetchStart);
+              fetchDuration = Math.max(fetchDuration, remaining);
+            }
+          }
+        }
+      }
+
+      const renderCost = atPctl(b.renderCost, pctl, 1);
       const fetchEnd = fetchStart + fetchDuration;
 
       scheduled.push({
@@ -371,11 +424,12 @@ function computeWaterfall(
   // Build BoundaryTiming[] with thread simulation
   const ssrTimings: WaterfallTiming[] = scheduled.map((s) => {
     const queryName = s.info.queries[0]?.queryName ?? "";
-    const isCached = s.info.queries.length > 0 &&
-      s.info.queries[0].ops.every((op) => {
-        const resolved = resolveOpDuration(op.value, pctl);
-        return resolved.cached;
-      });
+
+    // A boundary is "fully cached" only if all its queries are cached AND
+    // there is no remaining prefetch wait time (fetchDuration === 0)
+    const allOpsCached = s.info.queries.length > 0 &&
+      s.info.queries.every((q) => q.noAwait || q.ops.every((op) => resolveOpDuration(op.value, pctl).cached));
+    const isCached = allOpsCached && s.fetchDuration === 0;
 
     // Determine color from the heaviest subgraph (highest p99 duration)
     let subgraphColor: string | undefined;
@@ -411,22 +465,24 @@ function computeWaterfall(
     const csrFlat = flattenTree(csrBoundaries);
     let csrWallStart = hydrationMs;
     for (const b of csrFlat) {
-      const q = b.queries[0];
       let fetchDuration = 0;
-      if (q) {
+      for (const q of b.queries) {
+        if (q.noAwait) continue;
+        let qDuration: number;
         if (q.duration !== undefined) {
-          fetchDuration = atPctl(q.duration, 50); // CSR uses ~p50 in waterfall
+          qDuration = atPctl(q.duration, 50); // CSR uses ~p50 in waterfall
         } else {
           const opDurations = q.ops.map((op) => resolveOpDuration(op.value, 50).duration);
-          fetchDuration = Math.max(0, ...opDurations);
+          qDuration = Math.max(0, ...opDurations);
         }
+        fetchDuration = Math.max(fetchDuration, qDuration);
       }
       csrTimings.push({
         name: b.name,
         boundaryPath: b.path,
         wallStart: Math.round(csrWallStart),
         fetchDuration: Math.round(fetchDuration),
-        queryName: q?.queryName ?? "",
+        queryName: b.queries[0]?.queryName ?? "",
       });
       csrWallStart += fetchDuration + atPctl(b.renderCost, pctl, 1);
     }
@@ -463,21 +519,51 @@ function computeTree(
   // Schedule boundaries to compute wallStart (same algorithm as waterfall but
   // using real pctl fetch durations, not the fudged waterfall values)
   const wallStartByPath = new Map<string, number>();
+  const treePrefetchRegistry = new Map<string, { wallStart: number; duration: number }>();
+
   function scheduleBoundaries(roots: BoundaryInfo[], parentFetchEnd: number) {
     for (const b of roots) {
-      let boundaryFetch = 0;
-      if (b.queries.length > 0) {
-        const q = b.queries[0];
+      const fetchStart = parentFetchEnd;
+
+      // Register noAwait (prefetch) queries
+      for (const q of b.queries) {
+        if (!q.noAwait) continue;
+        let prefetchDuration: number;
         if (q.duration !== undefined) {
-          boundaryFetch = atPctl(q.duration, pctl);
+          prefetchDuration = atPctl(q.duration, pctl);
         } else {
           const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
-          boundaryFetch = Math.max(0, ...opDurations);
+          prefetchDuration = Math.max(0, ...opDurations);
         }
+        treePrefetchRegistry.set(q.queryName, { wallStart: fetchStart, duration: prefetchDuration });
       }
-      wallStartByPath.set(b.path, parentFetchEnd);
+
+      // Compute awaited fetch duration (skip noAwait queries)
+      let boundaryFetch = 0;
+      for (const q of b.queries) {
+        if (q.noAwait) continue;
+        const allCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
+        if (allCached) {
+          // Check for in-flight prefetch remaining time
+          const prefetch = treePrefetchRegistry.get(q.queryName);
+          if (prefetch) {
+            const remaining = Math.max(0, (prefetch.wallStart + prefetch.duration) - fetchStart);
+            boundaryFetch = Math.max(boundaryFetch, remaining);
+          }
+          continue;
+        }
+        let qDuration: number;
+        if (q.duration !== undefined) {
+          qDuration = atPctl(q.duration, pctl);
+        } else {
+          const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
+          qDuration = Math.max(0, ...opDurations);
+        }
+        boundaryFetch = Math.max(boundaryFetch, qDuration);
+      }
+      wallStartByPath.set(b.path, fetchStart);
       // Children fetch concurrently after parent fetch completes
-      scheduleBoundaries(b.children, parentFetchEnd + boundaryFetch);
+      scheduleBoundaries(b.children, fetchStart + boundaryFetch);
     }
   }
   scheduleBoundaries(ssrRoots, 0);
@@ -495,21 +581,32 @@ function computeTree(
     const depth = getDepth(b.path);
     const hasChildren = b.children.length > 0 || b.queries.length > 0;
 
-    // Query-level fetch for the boundary row
+    // Query-level fetch for the boundary row — use max across awaited queries
+    const wallStart = wallStartByPath.get(b.path) ?? 0;
     let boundaryFetch = 0;
-    if (b.queries.length > 0) {
-      const q = b.queries[0];
+    for (const q of b.queries) {
+      if (q.noAwait) continue;
+      const allCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
+      if (allCached) {
+        const prefetch = treePrefetchRegistry.get(q.queryName);
+        if (prefetch) {
+          const remaining = Math.max(0, (prefetch.wallStart + prefetch.duration) - wallStart);
+          boundaryFetch = Math.max(boundaryFetch, remaining);
+        }
+        continue;
+      }
+      let qDuration: number;
       if (q.duration !== undefined) {
-        boundaryFetch = atPctl(q.duration, pctl);
+        qDuration = atPctl(q.duration, pctl);
       } else {
         const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
-        boundaryFetch = Math.max(0, ...opDurations);
+        qDuration = Math.max(0, ...opDurations);
       }
+      boundaryFetch = Math.max(boundaryFetch, qDuration);
     }
 
     const renderCost = atPctl(b.renderCost, pctl, 1);
     const total = boundaryFetch + renderCost;
-    const wallStart = wallStartByPath.get(b.path) ?? 0;
 
     nodes.push({
       name: b.name,
@@ -541,6 +638,21 @@ function computeTree(
       }
       const isCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
 
+      // noAwait queries show their full duration (they do fire) but are marked
+      // specially; cached queries with a prefetch show remaining time
+      let effectiveFetch = queryDuration;
+      if (q.noAwait) {
+        // Prefetch: fires the request but doesn't suspend
+        effectiveFetch = 0;
+      } else if (isCached) {
+        const prefetch = treePrefetchRegistry.get(q.queryName);
+        if (prefetch) {
+          effectiveFetch = Math.max(0, (prefetch.wallStart + prefetch.duration) - wallStart);
+        } else {
+          effectiveFetch = 0;
+        }
+      }
+
       nodes.push({
         name: q.queryName,
         path: `${b.path}.query${qi > 0 ? qi : ""}`,
@@ -548,13 +660,13 @@ function computeTree(
         type: "query",
         boundaryPath: b.path,
         wallStartPctl: 0,
-        fetchPctl: isCached ? 0 : queryDuration,
+        fetchPctl: effectiveFetch,
         renderCostPctl: 0,
         blockedPctl: 0,
-        totalPctl: isCached ? 0 : queryDuration,
+        totalPctl: effectiveFetch,
         slo: 0,
         lcpCritical: false,
-        cached: isCached,
+        cached: isCached && effectiveFetch === 0,
         hasChildren: false,
         phase: b.phase,
       });

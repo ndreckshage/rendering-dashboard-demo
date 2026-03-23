@@ -52,6 +52,48 @@ boundaries:
             user-subgraph: { p50: 40, p90: 80, p99: 130 }
 `;
 
+const MULTI_QUERY_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getNav:
+        ops:
+          cms-subgraph: 20
+    Content:
+      render_cost: 3
+      queries:
+        getContent:
+          ops:
+            product-subgraph: 30
+        getRecommendations:
+          ops:
+            recs-subgraph: { p50: 80, p90: 150, p99: 300 }
+`;
+
+const MULTI_QUERY_CSR_YAML = `
+route: /test
+hydration_ms: 100
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getNav:
+        ops:
+          cms-subgraph: 20
+    Dashboard:
+      csr: true
+      render_cost: 2
+      queries:
+        getUser:
+          ops:
+            user-subgraph: 30
+        getActivity:
+          ops:
+            activity-subgraph: 90
+`;
+
 const CACHED_OPS_YAML = `
 route: /test
 boundaries:
@@ -69,6 +111,79 @@ boundaries:
             product-subgraph:
               duration: 30
               cached: true
+`;
+
+// Parent prefetches getProduct (await: false), child awaits via cache.
+// product-subgraph takes 100ms. Parent render_cost=5, so child starts at
+// parentWallStart + 0 (parent didn't await) + 5 (render). The child starts
+// at ~networkOffset + 5ms. Prefetch started at networkOffset. So remaining
+// = max(0, networkOffset + 100 - (networkOffset + 5)) = 95ms.
+const PREFETCH_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getProduct:
+        await: false
+        ops:
+          product-subgraph: 100
+    ProductDetail:
+      render_cost: 3
+      queries:
+        getProduct:
+          ops:
+            product-subgraph:
+              duration: 100
+              cached: true
+`;
+
+// Like PREFETCH_YAML but the parent has a slow awaited query too,
+// so the child starts later and the prefetch may already be done.
+const PREFETCH_COMPLETED_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getNav:
+        ops:
+          cms-subgraph: 200
+      getProduct:
+        await: false
+        ops:
+          product-subgraph: 80
+    ProductDetail:
+      render_cost: 3
+      queries:
+        getProduct:
+          ops:
+            product-subgraph:
+              duration: 80
+              cached: true
+`;
+
+// Deep nesting: grandparent prefetches, grandchild awaits
+const PREFETCH_DEEP_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getProduct:
+        await: false
+        ops:
+          product-subgraph: { p50: 100, p99: 300 }
+    Main:
+      render_cost: 3
+      Content:
+        render_cost: 2
+        queries:
+          getProduct:
+            ops:
+              product-subgraph:
+                duration: { p50: 100, p99: 300 }
+                cached: true
 `;
 
 describe("parseYamlDashboard", () => {
@@ -149,12 +264,79 @@ describe("parseYamlDashboard", () => {
       }
     });
 
+    it("uses max query duration when boundary has multiple queries", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_YAML);
+      const w = data.waterfall[50];
+      const content = w.ssrTimings.find((t) => t.name === "Content")!;
+      // getContent is 30ms, getRecommendations is 80ms at p50 — should use 80
+      expect(content.fetchDuration).toBeGreaterThanOrEqual(80);
+    });
+
+    it("multi-query span length increases at higher percentiles", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_YAML);
+      const w50 = data.waterfall[50];
+      const w99 = data.waterfall[99];
+      const content50 = w50.ssrTimings.find((t) => t.name === "Content")!;
+      const content99 = w99.ssrTimings.find((t) => t.name === "Content")!;
+      // At p99, getRecommendations is 300ms which should dominate
+      expect(content99.fetchDuration).toBeGreaterThan(content50.fetchDuration);
+    });
+
+    it("CSR timings use max query duration across multiple queries", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_CSR_YAML);
+      const w = data.waterfall[50];
+      const dashboard = w.csrTimings.find((t) => t.name === "Dashboard")!;
+      // getUser is 30ms, getActivity is 90ms — should use 90
+      expect(dashboard.fetchDuration).toBeGreaterThanOrEqual(90);
+    });
+
     it("marks cached boundaries with fetchDuration=0", () => {
       const data = parseYamlDashboard(CACHED_OPS_YAML);
       const w = data.waterfall[50];
       const bullets = w.ssrTimings.find((t) => t.name === "Bullets")!;
       expect(bullets.cached).toBe(true);
       expect(bullets.fetchDuration).toBe(0);
+    });
+
+    it("await:false query does not contribute to parent fetch duration", () => {
+      const data = parseYamlDashboard(PREFETCH_YAML);
+      const w = data.waterfall[50];
+      const layout = w.ssrTimings.find((t) => t.name === "Layout")!;
+      // Layout has getProduct with await:false — should not suspend
+      expect(layout.fetchDuration).toBe(0);
+    });
+
+    it("cached child shows remaining prefetch time, not 0", () => {
+      const data = parseYamlDashboard(PREFETCH_YAML);
+      const w = data.waterfall[50];
+      const detail = w.ssrTimings.find((t) => t.name === "ProductDetail")!;
+      // Prefetch: 100ms, started at Layout wallStart.
+      // Since Layout has no awaited query, child starts at same wallStart.
+      // Remaining = full 100ms (prefetch just started).
+      expect(detail.fetchDuration).toBe(100);
+      expect(detail.cached).toBe(false); // not fully cached — still waiting
+    });
+
+    it("cached child shows 0 when prefetch already completed", () => {
+      const data = parseYamlDashboard(PREFETCH_COMPLETED_YAML);
+      const w = data.waterfall[50];
+      const detail = w.ssrTimings.find((t) => t.name === "ProductDetail")!;
+      // Layout awaits getNav (200ms), prefetch is only 80ms.
+      // By the time ProductDetail starts (after Layout's 200ms fetch),
+      // the prefetch has long finished.
+      expect(detail.fetchDuration).toBe(0);
+      expect(detail.cached).toBe(true);
+    });
+
+    it("prefetch works across deep nesting (grandchild)", () => {
+      const data = parseYamlDashboard(PREFETCH_DEEP_YAML);
+      const w = data.waterfall[50];
+      const content = w.ssrTimings.find((t) => t.name === "Content")!;
+      // Prefetch started at Layout. Content is Layout > Main > Content.
+      // No intermediate boundary has an awaited query, so they all start
+      // at the same wallStart. Remaining = full prefetch duration.
+      expect(content.fetchDuration).toBe(100);
+      expect(content.cached).toBe(false);
     });
   });
 
@@ -202,6 +384,44 @@ describe("parseYamlDashboard", () => {
       expect(cart.phase).toBe("csr");
     });
 
+    it("tree boundary fetch uses max across multiple queries", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_YAML);
+      const t = data.tree[50];
+      const content = t.nodes.find((n) => n.name === "Content" && n.type === "boundary")!;
+      // getContent is 30ms, getRecommendations is 80ms at p50 — boundary fetch should be >= 80
+      expect(content.fetchPctl).toBeGreaterThanOrEqual(80);
+    });
+
+    it("tree: await:false query shows fetchPctl=0 on parent boundary", () => {
+      const data = parseYamlDashboard(PREFETCH_YAML);
+      const t = data.tree[50];
+      const layout = t.nodes.find((n) => n.name === "Layout" && n.type === "boundary")!;
+      // Layout has only a noAwait query, so boundary fetch should be 0
+      expect(layout.fetchPctl).toBe(0);
+    });
+
+    it("tree: cached query node shows remaining prefetch time", () => {
+      const data = parseYamlDashboard(PREFETCH_YAML);
+      const t = data.tree[50];
+      const detailQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.ProductDetail",
+      )!;
+      // Prefetch is 100ms, child starts at same wallStart (parent didn't await).
+      // Remaining = full 100ms.
+      expect(detailQuery.fetchPctl).toBe(100);
+      expect(detailQuery.cached).toBe(false); // not fully resolved yet
+    });
+
+    it("tree: cached query shows 0 when prefetch already completed", () => {
+      const data = parseYamlDashboard(PREFETCH_COMPLETED_YAML);
+      const t = data.tree[50];
+      const detailQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.ProductDetail",
+      )!;
+      expect(detailQuery.fetchPctl).toBe(0);
+      expect(detailQuery.cached).toBe(true);
+    });
+
     it("computes blocked_ms from thread simulation", () => {
       const data = parseYamlDashboard(TWO_BOUNDARY_YAML);
       const t = data.tree[50];
@@ -244,6 +464,16 @@ describe("parseYamlDashboard", () => {
     it("cached ops count as deduped, not as calls", () => {
       const data = parseYamlDashboard(CACHED_OPS_YAML);
       const s = data.subgraphs[50];
+      expect(s.summary.dedupedPerReq).toBeGreaterThan(0);
+    });
+
+    it("await:false queries still count as real subgraph calls", () => {
+      const data = parseYamlDashboard(PREFETCH_YAML);
+      const s = data.subgraphs[50];
+      const productRow = s.rows.find((r) => r.name === "product-subgraph")!;
+      // The noAwait query fires a real request — should count as a call
+      expect(productRow.callsPerReq).toBeGreaterThanOrEqual(1);
+      // The cached child should count as deduped
       expect(s.summary.dedupedPerReq).toBeGreaterThan(0);
     });
   });
