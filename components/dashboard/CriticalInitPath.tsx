@@ -525,7 +525,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
               </div>
             </Tooltip>
           )}
-          {lcpDisplayed > 0 && (
+          {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
             <Tooltip content={`LCP displayed at ${lcpDisplayed}ms — image downloaded, decoded and painted by the browser (+${lcpImageLatencyMs}ms network/render overhead after stream)`}>
               <div className="relative h-4">
                 <div
@@ -689,7 +689,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
               style={{ left: `calc(${(lcpRendered / maxMs) * 100}% + 12px)` }}
             />
           )}
-          {lcpDisplayed > 0 && (
+          {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
             <div
               className="absolute top-0 bottom-0 w-px bg-emerald-300/40 z-0"
               style={{ left: `calc(${(lcpDisplayed / maxMs) * 100}% + 12px)` }}
@@ -729,6 +729,33 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
           </div>
 
           <div className="relative h-10 md:h-8 z-10">
+            {networkOffsetMs > 0 && (
+              <Tooltip
+                className="absolute top-0 h-full cursor-default"
+                style={{
+                  left: "0%",
+                  width: `${Math.max((networkOffsetMs / maxMs) * 100, 1.5)}%`,
+                }}
+                content={
+                  <TooltipContent
+                    title="Network Offset"
+                    lines={[
+                      { label: "Duration", value: `${networkOffsetMs}ms`, color: "text-zinc-100" },
+                      { label: "Type", value: "Edge/network overhead" },
+                    ]}
+                  />
+                }
+              >
+                <div
+                  className="h-full rounded flex items-center overflow-hidden border border-dashed border-zinc-600"
+                  style={{ backgroundColor: "rgba(113, 113, 122, 0.3)" }}
+                >
+                  <span className="text-xs text-zinc-400 px-1 truncate font-mono">
+                    {networkOffsetMs}ms
+                  </span>
+                </div>
+              </Tooltip>
+            )}
             {renderBlocks.map((block) => {
               const leftPct = (block.start / maxMs) * 100;
               const widthPct = Math.max((block.duration / maxMs) * 100, 1.5);
@@ -887,7 +914,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                 style={{ left: `calc(${(lcpRendered / maxMs) * 100}% + 12px)` }}
               />
             )}
-            {lcpDisplayed > 0 && (
+            {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
               <div
                 className="absolute top-3 bottom-3 w-px bg-emerald-300/40 z-0"
                 style={{ left: `calc(${(lcpDisplayed / maxMs) * 100}% + 12px)` }}
@@ -1131,7 +1158,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
           <span className="text-zinc-500">LCP streamed: </span>
           <span className="text-green-400 font-medium">{lcpRendered}ms</span>
         </div>
-        {lcpDisplayed > 0 && (
+        {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
           <div>
             <span className="text-zinc-500">LCP displayed: </span>
             <span className="text-emerald-300 font-medium">{lcpDisplayed}ms</span>
