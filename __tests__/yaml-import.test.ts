@@ -52,6 +52,48 @@ boundaries:
             user-subgraph: { p50: 40, p90: 80, p99: 130 }
 `;
 
+const MULTI_QUERY_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getNav:
+        ops:
+          cms-subgraph: 20
+    Content:
+      render_cost: 3
+      queries:
+        getContent:
+          ops:
+            product-subgraph: 30
+        getRecommendations:
+          ops:
+            recs-subgraph: { p50: 80, p90: 150, p99: 300 }
+`;
+
+const MULTI_QUERY_CSR_YAML = `
+route: /test
+hydration_ms: 100
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getNav:
+        ops:
+          cms-subgraph: 20
+    Dashboard:
+      csr: true
+      render_cost: 2
+      queries:
+        getUser:
+          ops:
+            user-subgraph: 30
+        getActivity:
+          ops:
+            activity-subgraph: 90
+`;
+
 const CACHED_OPS_YAML = `
 route: /test
 boundaries:
@@ -149,6 +191,32 @@ describe("parseYamlDashboard", () => {
       }
     });
 
+    it("uses max query duration when boundary has multiple queries", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_YAML);
+      const w = data.waterfall[50];
+      const content = w.ssrTimings.find((t) => t.name === "Content")!;
+      // getContent is 30ms, getRecommendations is 80ms at p50 — should use 80
+      expect(content.fetchDuration).toBeGreaterThanOrEqual(80);
+    });
+
+    it("multi-query span length increases at higher percentiles", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_YAML);
+      const w50 = data.waterfall[50];
+      const w99 = data.waterfall[99];
+      const content50 = w50.ssrTimings.find((t) => t.name === "Content")!;
+      const content99 = w99.ssrTimings.find((t) => t.name === "Content")!;
+      // At p99, getRecommendations is 300ms which should dominate
+      expect(content99.fetchDuration).toBeGreaterThan(content50.fetchDuration);
+    });
+
+    it("CSR timings use max query duration across multiple queries", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_CSR_YAML);
+      const w = data.waterfall[50];
+      const dashboard = w.csrTimings.find((t) => t.name === "Dashboard")!;
+      // getUser is 30ms, getActivity is 90ms — should use 90
+      expect(dashboard.fetchDuration).toBeGreaterThanOrEqual(90);
+    });
+
     it("marks cached boundaries with fetchDuration=0", () => {
       const data = parseYamlDashboard(CACHED_OPS_YAML);
       const w = data.waterfall[50];
@@ -200,6 +268,14 @@ describe("parseYamlDashboard", () => {
       const t = data.tree[50];
       const cart = t.nodes.find((n) => n.name === "Cart" && n.type === "boundary")!;
       expect(cart.phase).toBe("csr");
+    });
+
+    it("tree boundary fetch uses max across multiple queries", () => {
+      const data = parseYamlDashboard(MULTI_QUERY_YAML);
+      const t = data.tree[50];
+      const content = t.nodes.find((n) => n.name === "Content" && n.type === "boundary")!;
+      // getContent is 30ms, getRecommendations is 80ms at p50 — boundary fetch should be >= 80
+      expect(content.fetchPctl).toBeGreaterThanOrEqual(80);
     });
 
     it("computes blocked_ms from thread simulation", () => {
