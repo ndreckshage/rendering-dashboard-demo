@@ -287,19 +287,24 @@ function computeWaterfall(
       boundaryDurations.push({ boundary: b, queryDurationP50: 0, queryDurationPctl: 0, variance: 0 });
       continue;
     }
-    // Use the first (primary) query's duration
-    const q = b.queries[0];
-    let dP50: number;
-    let dPctl: number;
-    if (q.duration !== undefined) {
-      dP50 = atPctl(q.duration, 50);
-      dPctl = atPctl(q.duration, pctl);
-    } else {
-      // Derive from max of ops
-      const opDurationsP50 = q.ops.map((op) => resolveOpDuration(op.value, 50).duration);
-      const opDurationsPctl = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
-      dP50 = Math.max(0, ...opDurationsP50);
-      dPctl = Math.max(0, ...opDurationsPctl);
+    // Use the max duration across all queries in this boundary
+    let dP50 = 0;
+    let dPctl = 0;
+    for (const q of b.queries) {
+      let qP50: number;
+      let qPctl: number;
+      if (q.duration !== undefined) {
+        qP50 = atPctl(q.duration, 50);
+        qPctl = atPctl(q.duration, pctl);
+      } else {
+        // Derive from max of ops
+        const opDurationsP50 = q.ops.map((op) => resolveOpDuration(op.value, 50).duration);
+        const opDurationsPctl = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
+        qP50 = Math.max(0, ...opDurationsP50);
+        qPctl = Math.max(0, ...opDurationsPctl);
+      }
+      dP50 = Math.max(dP50, qP50);
+      dPctl = Math.max(dPctl, qPctl);
     }
     boundaryDurations.push({
       boundary: b,
@@ -411,22 +416,23 @@ function computeWaterfall(
     const csrFlat = flattenTree(csrBoundaries);
     let csrWallStart = hydrationMs;
     for (const b of csrFlat) {
-      const q = b.queries[0];
       let fetchDuration = 0;
-      if (q) {
+      for (const q of b.queries) {
+        let qDuration: number;
         if (q.duration !== undefined) {
-          fetchDuration = atPctl(q.duration, 50); // CSR uses ~p50 in waterfall
+          qDuration = atPctl(q.duration, 50); // CSR uses ~p50 in waterfall
         } else {
           const opDurations = q.ops.map((op) => resolveOpDuration(op.value, 50).duration);
-          fetchDuration = Math.max(0, ...opDurations);
+          qDuration = Math.max(0, ...opDurations);
         }
+        fetchDuration = Math.max(fetchDuration, qDuration);
       }
       csrTimings.push({
         name: b.name,
         boundaryPath: b.path,
         wallStart: Math.round(csrWallStart),
         fetchDuration: Math.round(fetchDuration),
-        queryName: q?.queryName ?? "",
+        queryName: b.queries[0]?.queryName ?? "",
       });
       csrWallStart += fetchDuration + atPctl(b.renderCost, pctl, 1);
     }
@@ -466,14 +472,15 @@ function computeTree(
   function scheduleBoundaries(roots: BoundaryInfo[], parentFetchEnd: number) {
     for (const b of roots) {
       let boundaryFetch = 0;
-      if (b.queries.length > 0) {
-        const q = b.queries[0];
+      for (const q of b.queries) {
+        let qDuration: number;
         if (q.duration !== undefined) {
-          boundaryFetch = atPctl(q.duration, pctl);
+          qDuration = atPctl(q.duration, pctl);
         } else {
           const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
-          boundaryFetch = Math.max(0, ...opDurations);
+          qDuration = Math.max(0, ...opDurations);
         }
+        boundaryFetch = Math.max(boundaryFetch, qDuration);
       }
       wallStartByPath.set(b.path, parentFetchEnd);
       // Children fetch concurrently after parent fetch completes
@@ -495,16 +502,17 @@ function computeTree(
     const depth = getDepth(b.path);
     const hasChildren = b.children.length > 0 || b.queries.length > 0;
 
-    // Query-level fetch for the boundary row
+    // Query-level fetch for the boundary row — use max across all queries
     let boundaryFetch = 0;
-    if (b.queries.length > 0) {
-      const q = b.queries[0];
+    for (const q of b.queries) {
+      let qDuration: number;
       if (q.duration !== undefined) {
-        boundaryFetch = atPctl(q.duration, pctl);
+        qDuration = atPctl(q.duration, pctl);
       } else {
         const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
-        boundaryFetch = Math.max(0, ...opDurations);
+        qDuration = Math.max(0, ...opDurations);
       }
+      boundaryFetch = Math.max(boundaryFetch, qDuration);
     }
 
     const renderCost = atPctl(b.renderCost, pctl, 1);
