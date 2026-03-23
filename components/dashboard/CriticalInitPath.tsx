@@ -179,14 +179,14 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
 
   // Network offset — edge/network overhead before server processing
   const networkOffsetMs = useMemo(() => {
-    if (mock?.[pctl]) return mock[pctl].networkOffsetMs ?? 0;
-    return 0;
+    if (mock?.[pctl]) return mock[pctl].networkOffsetMs ?? 20;
+    return 20;
   }, [pctl, mock]);
 
   // LCP image latency — browser download + decode + paint after HTML streams
   const lcpImageLatencyMs = useMemo(() => {
-    if (mock?.[pctl]) return mock[pctl].lcpImageLatencyMs ?? 0;
-    return 0;
+    if (mock?.[pctl]) return mock[pctl].lcpImageLatencyMs ?? 80;
+    return 80;
   }, [pctl, mock]);
 
   // LoAF entries — from mock or representative load
@@ -525,7 +525,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
               </div>
             </Tooltip>
           )}
-          {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
+          {lcpDisplayed > 0 && (
             <Tooltip content={`LCP displayed at ${lcpDisplayed}ms — image downloaded, decoded and painted by the browser (+${lcpImageLatencyMs}ms network/render overhead after stream)`}>
               <div className="relative h-4">
                 <div
@@ -689,7 +689,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
               style={{ left: `calc(${(lcpRendered / maxMs) * 100}% + 12px)` }}
             />
           )}
-          {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
+          {lcpDisplayed > 0 && (
             <div
               className="absolute top-0 bottom-0 w-px bg-emerald-300/40 z-0"
               style={{ left: `calc(${(lcpDisplayed / maxMs) * 100}% + 12px)` }}
@@ -914,7 +914,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
                 style={{ left: `calc(${(lcpRendered / maxMs) * 100}% + 12px)` }}
               />
             )}
-            {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
+            {lcpDisplayed > 0 && (
               <div
                 className="absolute top-3 bottom-3 w-px bg-emerald-300/40 z-0"
                 style={{ left: `calc(${(lcpDisplayed / maxMs) * 100}% + 12px)` }}
@@ -1158,7 +1158,7 @@ export function CriticalInitPath({ boundaries, queries, pctl, hydrationTimes, lo
           <span className="text-zinc-500">LCP streamed: </span>
           <span className="text-green-400 font-medium">{lcpRendered}ms</span>
         </div>
-        {lcpDisplayed > 0 && lcpImageLatencyMs > 0 && (
+        {lcpDisplayed > 0 && (
           <div>
             <span className="text-zinc-500">LCP displayed: </span>
             <span className="text-emerald-300 font-medium">{lcpDisplayed}ms</span>
