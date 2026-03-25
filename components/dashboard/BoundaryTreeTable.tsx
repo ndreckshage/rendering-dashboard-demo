@@ -309,6 +309,27 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
       }
     }
 
+    // Build lookup of actual query durations from non-cached executions.
+    // Cached queries record duration_ms=0, but we want to show the real cost.
+    const actualQueryDuration = new Map<string, number[]>();
+    for (const q of queries) {
+      if (!q.fullyCached) {
+        const list = actualQueryDuration.get(q.queryName) ?? [];
+        list.push(q.duration_ms);
+        actualQueryDuration.set(q.queryName, list);
+      }
+    }
+    // Same for subgraph ops
+    const actualOpDuration = new Map<string, number[]>();
+    for (const op of subgraphOps) {
+      if (!op.cached) {
+        const key = `${op.queryName}:${op.subgraphName}`;
+        const list = actualOpDuration.get(key) ?? [];
+        list.push(op.duration_ms);
+        actualOpDuration.set(key, list);
+      }
+    }
+
     const nodes: TreeNode[] = [];
 
     for (const item of treeStructure) {
@@ -343,9 +364,12 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         const metrics = queryByKey.get(key) ?? [];
         const durations = metrics.map((m) => m.duration_ms);
         const isCached = metrics.length > 0 && metrics.every((m) => m.fullyCached);
-        // Use actual recorded duration — for memoized queries still in-flight,
-        // this reflects the remaining wait time (matching the boundary row)
-        const queryDurationPctl = percentile(durations, pctl);
+        // Cached queries record duration_ms=0; use actual duration from the
+        // non-cached execution of the same query so users see the real cost.
+        const sourceDurations = isCached
+          ? (actualQueryDuration.get(item.queryName!) ?? durations)
+          : durations;
+        const queryDurationPctl = percentile(sourceDurations, pctl);
 
         nodes.push({
           name: item.queryName!,
@@ -383,8 +407,12 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           ? SUBGRAPHS[sgName as SubgraphName]?.color
           : undefined;
 
-        // Use actual recorded duration — matches boundary row for memoized ops
-        const durationPctl = percentile(durations, pctl);
+        // Cached ops record duration_ms=0; use actual duration from the
+        // non-cached execution so users see the real cost.
+        const sourceDurations = isCached
+          ? (actualOpDuration.get(`${item.queryName}:${sgName}`) ?? durations)
+          : durations;
+        const durationPctl = percentile(sourceDurations, pctl);
         nodes.push({
           name: sgName || item.opName!,
           path: item.path,
@@ -992,7 +1020,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                   {node.noAwait
                     ? <span className="opacity-50">{node.fetchPctl}ms</span>
                     : node.cached
-                      ? <span className="opacity-60">{node.fetchPctl}ms</span>
+                      ? <span className="opacity-60">{node.fetchPctl}ms (HERE)</span>
                       : `${node.fetchPctl}ms`}
                 </td>
                 <td className="text-right py-1.5 px-2 text-zinc-300">
