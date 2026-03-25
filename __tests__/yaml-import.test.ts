@@ -513,7 +513,8 @@ describe("parseYamlDashboard", () => {
         (n) => n.type === "query" && n.boundaryPath === "Layout.Bullets",
       )!;
       expect(bulletQuery.cached).toBe(true);
-      expect(bulletQuery.fetchPctl).toBe(0);
+      // Shows actual query duration (faded in UI), not 0
+      expect(bulletQuery.fetchPctl).toBe(30);
     });
 
     it("tracks call summary (uncached vs cached ops)", () => {
@@ -559,13 +560,15 @@ describe("parseYamlDashboard", () => {
       expect(detailQuery.cached).toBe(true); // memoized, but still shows remaining time
     });
 
-    it("tree: cached query shows 0 when prefetch already completed", () => {
+    it("tree: memoized query always shows actual duration even when prefetch completed", () => {
       const data = parseYamlDashboard(PREFETCH_COMPLETED_YAML);
       const t = data.tree[50];
       const detailQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.ProductDetail",
       )!;
-      expect(detailQuery.fetchPctl).toBe(0);
+      // Shows actual query duration (80ms), not remaining time (0ms)
+      // Boundary row shows 0ms fetch since prefetch completed; query row shows real cost faded
+      expect(detailQuery.fetchPctl).toBe(80);
       expect(detailQuery.cached).toBe(true);
     });
 
@@ -600,16 +603,15 @@ describe("parseYamlDashboard", () => {
       expect(child2Query.fetchPctl).toBe(50);
     });
 
-    it("tree: memoized query shows 0 when original already completed", () => {
+    it("tree: memoized query shows actual duration even when original completed", () => {
       const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
       const t = data.tree[50];
       const siblingQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.Sibling",
       )!;
-      // Layout calls getProductInfo (60ms). Sibling starts after Layout fetch ends (60ms).
-      // Original completed → remaining = 0.
+      // Query row always shows actual latency (60ms) faded — boundary row shows 0ms fetch
       expect(siblingQuery.cached).toBe(true);
-      expect(siblingQuery.fetchPctl).toBe(0);
+      expect(siblingQuery.fetchPctl).toBe(60);
     });
 
     it("tree: memoized boundary fetch includes remaining time impact", () => {
@@ -632,16 +634,16 @@ describe("parseYamlDashboard", () => {
       expect(siblingBoundary.fetchPctl).toBe(0);
     });
 
-    it("tree: partial prefetch shows correct remaining time", () => {
+    it("tree: memoized query shows actual duration regardless of remaining time", () => {
       const data = parseYamlDashboard(PREFETCH_PARTIAL_YAML);
       const t = data.tree[50];
       const detailQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.Detail",
       )!;
-      // Layout awaits getNav (40ms), prefetches getProduct (80ms).
-      // Detail starts at 40ms. Remaining = 80-40 = 40ms.
+      // Query row shows actual duration (80ms) faded. Boundary row shows
+      // remaining time (40ms) since that's the real rendering impact.
       expect(detailQuery.cached).toBe(true);
-      expect(detailQuery.fetchPctl).toBe(40);
+      expect(detailQuery.fetchPctl).toBe(80);
     });
 
     it("tree: prefetch query with await:false on same boundary as awaited queries", () => {
@@ -675,7 +677,7 @@ describe("parseYamlDashboard", () => {
       expect(bulletOp.totalPctl).toBe(30);
     });
 
-    it("tree: memoized query shows 0 but its subgraph-op shows actual duration", () => {
+    it("tree: memoized query and subgraph-op both show actual duration", () => {
       const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
       const t = data.tree[50];
       const siblingQuery = t.nodes.find(
@@ -684,10 +686,9 @@ describe("parseYamlDashboard", () => {
       const siblingOp = t.nodes.find(
         (n) => n.type === "subgraph-op" && n.boundaryPath === "Layout.Sibling",
       )!;
-      // Query shows remaining time (0 — original resolved before consumer)
+      // Both show actual duration (faded in UI) — boundary row shows 0ms fetch
       expect(siblingQuery.cached).toBe(true);
-      expect(siblingQuery.fetchPctl).toBe(0);
-      // But subgraph-op shows actual duration so user sees what the op costs
+      expect(siblingQuery.fetchPctl).toBe(60);
       expect(siblingOp.cached).toBe(true);
       expect(siblingOp.fetchPctl).toBe(60);
     });

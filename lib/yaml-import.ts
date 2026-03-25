@@ -683,21 +683,10 @@ function computeTree(
       }
       const isCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
 
-      // noAwait queries show their full duration (they fire but don't suspend);
-      // memoized queries show remaining time from prefetch or prior execution
+      // For display in the tree: always show the actual query duration (faded for
+      // memoized/prefetch in the UI). The remaining-time calculation only matters for
+      // the *boundary* row's fetch — individual query/op rows show real latency.
       let effectiveFetch = queryDuration;
-      if (q.noAwait) {
-        // Prefetch: fires the request but doesn't suspend — show actual duration (faded in UI)
-        effectiveFetch = queryDuration;
-      } else if (isCached) {
-        // Memoized: show remaining time from prefetch or prior execution
-        const source = treePrefetchRegistry.get(q.queryName) ?? treeQueryExecRegistry.get(q.queryName);
-        if (source) {
-          effectiveFetch = Math.max(0, (source.wallStart + source.duration) - wallStart);
-        } else {
-          effectiveFetch = 0;
-        }
-      }
 
       nodes.push({
         name: q.queryName,
