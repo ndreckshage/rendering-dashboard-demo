@@ -596,15 +596,15 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
     setLastExpandKey(expandKey);
   }
 
-  // When activeBoundaryPaths changes, auto-collapse non-matching boundaries' queries
-  // and expand matching ones. This replaces the old hide-based filtering.
+  // When activeBoundaryPaths changes, collapse components outside the active path
+  // and expand those in the path. Non-active boundaries are collapsed + dimmed.
   const [lastActiveKey, setLastActiveKey] = useState<string>("");
   const activeKey = activeBoundaryPaths ? [...activeBoundaryPaths].sort().join(",") : "";
   if (activeKey !== lastActiveKey) {
     setLastActiveKey(activeKey);
     if (activeBoundaryPaths) {
-      // Expand all boundaries so the tree structure stays visible
-      setExpanded(new Set(allBoundaryPaths));
+      // Only expand boundaries in the active path
+      setExpanded(new Set([...allBoundaryPaths].filter((p) => activeBoundaryPaths.has(p))));
       // Only expand queries under active boundaries
       const activeQueries = new Set<string>();
       for (const n of treeNodes) {
@@ -862,11 +862,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
 
             const isExpanded = node.type === "boundary" && expanded.has(node.boundaryPath);
             const isQueryExpanded = node.type === "query" && expandedQueries.has(node.path) && queryHasChildren.has(node.path);
-            const isDimmedByFilter =
-              selectedSubgraphs.size > 0 &&
-              node.type === "subgraph-op" &&
-              node.subgraphName != null &&
-              !selectedSubgraphs.has(node.subgraphName);
+            const isDimmedByFilter = activeBoundaryPaths !== null && !activeBoundaryPaths.has(node.boundaryPath);
 
             const isClickExpandable =
               (node.type === "boundary" && node.hasChildren) ||
@@ -885,7 +881,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                 key={node.path}
                 className={`group border-b border-zinc-800/50 hover:bg-zinc-800/30 ${
                   node.lcpCritical ? "border-l-2 border-l-blue-500/50" : ""
-                } ${isDimmedByFilter ? "opacity-30" : ""} ${isClickExpandable ? "cursor-pointer" : ""}`}
+                } ${isDimmedByFilter ? "opacity-50" : ""} ${isClickExpandable ? "cursor-pointer" : ""}`}
                 onClick={handleRowClick}
               >
                 <td className="py-1.5 px-2">
