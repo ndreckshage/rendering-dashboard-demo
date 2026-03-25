@@ -343,9 +343,9 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         const metrics = queryByKey.get(key) ?? [];
         const durations = metrics.map((m) => m.duration_ms);
         const isCached = metrics.length > 0 && metrics.every((m) => m.fullyCached);
-        // For live data, cached queries already have duration_ms=0 from
-        // React.cache() returning instantly — consistent with boundary row
-        const queryDurationPctl = isCached ? 0 : percentile(durations, pctl);
+        // Use actual recorded duration — for memoized queries still in-flight,
+        // this reflects the remaining wait time (matching the boundary row)
+        const queryDurationPctl = percentile(durations, pctl);
 
         nodes.push({
           name: item.queryName!,
@@ -383,8 +383,8 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           ? SUBGRAPHS[sgName as SubgraphName]?.color
           : undefined;
 
-        // For live data, cached ops already have duration_ms=0 — consistent with boundary
-        const durationPctl = isCached ? 0 : percentile(durations, pctl);
+        // Use actual recorded duration — matches boundary row for memoized ops
+        const durationPctl = percentile(durations, pctl);
         nodes.push({
           name: sgName || item.opName!,
           path: item.path,
