@@ -1020,7 +1020,7 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                   {node.noAwait
                     ? <span className="opacity-50">{node.fetchPctl}ms</span>
                     : node.cached
-                      ? <span className="opacity-60">{node.fetchPctl}ms (HERE)</span>
+                      ? <span className="opacity-60">{node.fetchPctl}ms</span>
                       : `${node.fetchPctl}ms`}
                 </td>
                 <td className="text-right py-1.5 px-2 text-zinc-300">
