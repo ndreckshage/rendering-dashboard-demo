@@ -163,6 +163,93 @@ boundaries:
               cached: true
 `;
 
+// Memoized without prefetch: sibling boundary calls same query as parent.
+// Layout calls getProductInfo (awaited, 60ms), Sibling also calls it (cached).
+// Sibling starts after Layout's fetch (60ms). Remaining = max(0, 0+60-60) = 0.
+const MEMOIZED_SIBLING_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getProductInfo:
+        ops:
+          product-subgraph: 60
+    Sibling:
+      render_cost: 3
+      queries:
+        getProductInfo:
+          ops:
+            product-subgraph:
+              duration: 60
+              cached: true
+`;
+
+// Memoized with in-flight overlap: two siblings start concurrently.
+// Layout fires getProductInfo (60ms) at wallStart=0. Layout also fires
+// getOther (30ms) which completes first. Child1 (under Layout) calls
+// getProductInfo (cached). Child1 starts after Layout fetch (60ms).
+// At that point getProductInfo just finished → remaining = 0.
+// But if we restructure so that child starts before original finishes...
+//
+// Layout has awaited getNav (20ms). Sibling (child of Layout) starts at 20ms.
+// Layout also fires getProductInfo (awaited, 60ms) — but this is the SAME boundary,
+// so Layout's fetch = max(20, 60) = 60. Child starts at 60ms. Remaining = 0.
+//
+// For a true in-flight case, we need two sibling boundaries under the same parent
+// where one fires the query and the other uses it cached, and both start at the same time.
+// With the tree model, siblings start at the same wallStart (parentFetchEnd).
+// So: Parent has no queries. Child1 calls getProductInfo (50ms). Child2 calls getProductInfo (cached).
+// Both start at parentFetchEnd. queryExecRegistry records Child1's exec at wallStart=parentFetchEnd.
+// Child2 checks: remaining = max(0, parentFetchEnd + 50 - parentFetchEnd) = 50ms.
+const MEMOIZED_INFLIGHT_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 2
+    Child1:
+      render_cost: 3
+      queries:
+        getProductInfo:
+          ops:
+            product-subgraph: 50
+    Child2:
+      render_cost: 3
+      queries:
+        getProductInfo:
+          ops:
+            product-subgraph:
+              duration: 50
+              cached: true
+`;
+
+// Prefetch + memoized + awaited query on same boundary.
+// Layout prefetches getProduct (await: false, 80ms) and awaits getNav (40ms).
+// Layout's fetch = 40ms (only getNav). Child starts at 40ms.
+// Prefetch started at 0ms. Remaining = max(0, 0+80-40) = 40ms.
+const PREFETCH_PARTIAL_YAML = `
+route: /test
+boundaries:
+  Layout:
+    render_cost: 5
+    queries:
+      getNav:
+        ops:
+          cms-subgraph: 40
+      getProduct:
+        await: false
+        ops:
+          product-subgraph: 80
+    Detail:
+      render_cost: 3
+      queries:
+        getProduct:
+          ops:
+            product-subgraph:
+              duration: 80
+              cached: true
+`;
+
 // Deep nesting: grandparent prefetches, grandchild awaits
 const PREFETCH_DEEP_YAML = `
 route: /test
@@ -338,6 +425,66 @@ describe("parseYamlDashboard", () => {
       expect(content.fetchDuration).toBe(100);
       expect(content.cached).toBe(false);
     });
+
+    it("waterfall includes prefetchQueries for boundaries with await:false", () => {
+      const data = parseYamlDashboard(PREFETCH_YAML);
+      const w = data.waterfall[50];
+      const layout = w.ssrTimings.find((t) => t.name === "Layout")!;
+      expect(layout.prefetchQueries).toBeDefined();
+      expect(layout.prefetchQueries).toContain("getProduct");
+    });
+
+    it("waterfall does not include prefetchQueries for boundaries without await:false", () => {
+      const data = parseYamlDashboard(TWO_BOUNDARY_YAML);
+      const w = data.waterfall[50];
+      const layout = w.ssrTimings.find((t) => t.name === "Layout")!;
+      expect(layout.prefetchQueries).toBeUndefined();
+    });
+
+    it("waterfall queryNames excludes prefetch queries", () => {
+      const data = parseYamlDashboard(PREFETCH_PARTIAL_YAML);
+      const w = data.waterfall[50];
+      const layout = w.ssrTimings.find((t) => t.name === "Layout")!;
+      // queryNames should only include awaited queries
+      expect(layout.queryNames).toContain("getNav");
+      expect(layout.queryNames).not.toContain("getProduct");
+      // prefetchQueries should include the prefetch
+      expect(layout.prefetchQueries).toContain("getProduct");
+    });
+
+    it("memoized boundary shows remaining time via queryExecRegistry (no prefetch)", () => {
+      const data = parseYamlDashboard(MEMOIZED_INFLIGHT_YAML);
+      const w = data.waterfall[50];
+      const child2 = w.ssrTimings.find((t) => t.name === "Child2")!;
+      // Child1 and Child2 start at same wallStart (after Layout).
+      // Child1 fires getProductInfo (50ms). Child2 is cached.
+      // Remaining = max(0, child1Start + 50 - child2Start) = 50ms
+      expect(child2.fetchDuration).toBe(50);
+      expect(child2.cached).toBe(false); // still waiting
+    });
+
+    it("memoized boundary shows 0 when original query already completed", () => {
+      const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
+      const w = data.waterfall[50];
+      const sibling = w.ssrTimings.find((t) => t.name === "Sibling")!;
+      // Layout calls getProductInfo (60ms). Sibling starts after Layout fetch (60ms).
+      // By that time, getProductInfo has completed. Remaining = 0.
+      expect(sibling.fetchDuration).toBe(0);
+      expect(sibling.cached).toBe(true);
+    });
+
+    it("partially-completed prefetch shows remaining time", () => {
+      const data = parseYamlDashboard(PREFETCH_PARTIAL_YAML);
+      const w = data.waterfall[50];
+      const detail = w.ssrTimings.find((t) => t.name === "Detail")!;
+      // Layout awaits getNav (40ms), prefetches getProduct (80ms).
+      // Detail starts at 40ms. Prefetch started at 0ms.
+      // Remaining = max(0, 0+80-40) = 40ms (using network offset ~20).
+      // With default network offset of 20: prefetch starts at 20, detail starts at 20+40=60.
+      // Remaining = max(0, 20+80-60) = 40ms.
+      expect(detail.fetchDuration).toBe(40);
+      expect(detail.cached).toBe(false);
+    });
   });
 
   describe("tree", () => {
@@ -359,14 +506,20 @@ describe("parseYamlDashboard", () => {
       expect(content.depth).toBe(1);
     });
 
-    it("marks cached ops", () => {
+    it("marks cached ops — query/op show actual duration", () => {
       const data = parseYamlDashboard(CACHED_OPS_YAML);
       const t = data.tree[50];
+      const bulletBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Bullets",
+      )!;
       const bulletQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.Bullets",
       )!;
       expect(bulletQuery.cached).toBe(true);
-      expect(bulletQuery.fetchPctl).toBe(0);
+      // Boundary shows remaining time (0 — original resolved before consumer)
+      expect(bulletBoundary.fetchPctl).toBe(0);
+      // Query shows actual duration (30ms) — UI fades it since memoized
+      expect(bulletQuery.fetchPctl).toBe(30);
     });
 
     it("tracks call summary (uncached vs cached ops)", () => {
@@ -409,17 +562,182 @@ describe("parseYamlDashboard", () => {
       // Prefetch is 100ms, child starts at same wallStart (parent didn't await).
       // Remaining = full 100ms.
       expect(detailQuery.fetchPctl).toBe(100);
-      expect(detailQuery.cached).toBe(false); // not fully resolved yet
+      expect(detailQuery.cached).toBe(true); // memoized, but still shows remaining time
     });
 
-    it("tree: cached query shows 0 when prefetch already completed", () => {
+    it("tree: memoized query shows actual duration even when prefetch completed", () => {
       const data = parseYamlDashboard(PREFETCH_COMPLETED_YAML);
       const t = data.tree[50];
+      const detailBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "ProductDetail",
+      )!;
       const detailQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.ProductDetail",
       )!;
-      expect(detailQuery.fetchPctl).toBe(0);
+      // Boundary shows 0 (prefetch resolved before consumer started)
+      expect(detailBoundary.fetchPctl).toBe(0);
+      // Query shows actual duration (80ms) — UI fades it since memoized
+      expect(detailQuery.fetchPctl).toBe(80);
       expect(detailQuery.cached).toBe(true);
+    });
+
+    it("tree: noAwait query node has noAwait flag and shows actual duration", () => {
+      const data = parseYamlDashboard(PREFETCH_YAML);
+      const t = data.tree[50];
+      const prefetchQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout",
+      )!;
+      expect(prefetchQuery.name).toBe("getProduct");
+      expect(prefetchQuery.noAwait).toBe(true);
+      // Should show actual duration (not 0) — UI will fade it
+      expect(prefetchQuery.fetchPctl).toBe(100);
+    });
+
+    it("tree: non-prefetch queries do not have noAwait flag", () => {
+      const data = parseYamlDashboard(TWO_BOUNDARY_YAML);
+      const t = data.tree[50];
+      const query = t.nodes.find((n) => n.type === "query")!;
+      expect(query.noAwait).toBeUndefined();
+    });
+
+    it("tree: memoized query via queryExecRegistry shows remaining time (siblings)", () => {
+      const data = parseYamlDashboard(MEMOIZED_INFLIGHT_YAML);
+      const t = data.tree[50];
+      const child2Query = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Child2",
+      )!;
+      // Child1 and Child2 start concurrently. getProductInfo takes 50ms.
+      // Remaining = 50ms (query just started in sibling).
+      expect(child2Query.cached).toBe(true);
+      expect(child2Query.fetchPctl).toBe(50);
+    });
+
+    it("tree: memoized query shows actual duration even when original completed", () => {
+      const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
+      const t = data.tree[50];
+      const siblingBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Sibling",
+      )!;
+      const siblingQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Sibling",
+      )!;
+      // Boundary shows 0 (original resolved before consumer started)
+      expect(siblingBoundary.fetchPctl).toBe(0);
+      // Query shows actual duration (60ms) — UI fades it since memoized
+      expect(siblingQuery.cached).toBe(true);
+      expect(siblingQuery.fetchPctl).toBe(60);
+    });
+
+    it("tree: memoized boundary fetch includes remaining time impact", () => {
+      const data = parseYamlDashboard(MEMOIZED_INFLIGHT_YAML);
+      const t = data.tree[50];
+      const child2Boundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Child2",
+      )!;
+      // Child2's only query is memoized with 50ms remaining.
+      // Boundary fetch should reflect this.
+      expect(child2Boundary.fetchPctl).toBe(50);
+    });
+
+    it("tree: memoized boundary fetch is 0 when original resolved", () => {
+      const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
+      const t = data.tree[50];
+      const siblingBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Sibling",
+      )!;
+      expect(siblingBoundary.fetchPctl).toBe(0);
+    });
+
+    it("tree: memoized query shows actual duration regardless of remaining time", () => {
+      const data = parseYamlDashboard(PREFETCH_PARTIAL_YAML);
+      const t = data.tree[50];
+      const detailBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Detail",
+      )!;
+      const detailQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Detail",
+      )!;
+      // Boundary shows remaining time (40ms — prefetch still in-flight)
+      expect(detailBoundary.fetchPctl).toBe(40);
+      // Query shows actual duration (80ms) — UI fades it since memoized
+      expect(detailQuery.cached).toBe(true);
+      expect(detailQuery.fetchPctl).toBe(80);
+    });
+
+    it("tree: prefetch query with await:false on same boundary as awaited queries", () => {
+      const data = parseYamlDashboard(PREFETCH_PARTIAL_YAML);
+      const t = data.tree[50];
+      const layoutQueries = t.nodes.filter(
+        (n) => n.type === "query" && n.boundaryPath === "Layout",
+      );
+      // Should have 2 queries: getNav (awaited) and getProduct (prefetch)
+      expect(layoutQueries.length).toBe(2);
+      const navQuery = layoutQueries.find((q) => q.name === "getNav")!;
+      const productQuery = layoutQueries.find((q) => q.name === "getProduct")!;
+      expect(navQuery.noAwait).toBeUndefined();
+      expect(productQuery.noAwait).toBe(true);
+      // Layout boundary fetch should be 40ms (getNav), not affected by prefetch
+      const layoutBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Layout",
+      )!;
+      expect(layoutBoundary.fetchPctl).toBe(40);
+    });
+
+    it("tree: memoized query/op show actual duration, boundary shows remaining", () => {
+      const data = parseYamlDashboard(CACHED_OPS_YAML);
+      const t = data.tree[50];
+      const bulletBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Bullets",
+      )!;
+      const bulletQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Bullets",
+      )!;
+      const bulletOp = t.nodes.find(
+        (n) => n.type === "subgraph-op" && n.boundaryPath === "Layout.Bullets",
+      )!;
+      // Boundary: remaining time = 0 (original resolved before consumer)
+      expect(bulletBoundary.fetchPctl).toBe(0);
+      // Query/op: actual duration (30ms) — UI fades since memoized
+      expect(bulletQuery.fetchPctl).toBe(30);
+      expect(bulletOp.fetchPctl).toBe(30);
+      expect(bulletOp.cached).toBe(true);
+    });
+
+    it("tree: memoized query/op show actual duration when resolved", () => {
+      const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
+      const t = data.tree[50];
+      const siblingBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Sibling",
+      )!;
+      const siblingQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Sibling",
+      )!;
+      const siblingOp = t.nodes.find(
+        (n) => n.type === "subgraph-op" && n.boundaryPath === "Layout.Sibling",
+      )!;
+      // Boundary: 0ms (original resolved before consumer)
+      expect(siblingBoundary.fetchPctl).toBe(0);
+      // Query/op: actual duration (60ms) — UI fades since memoized
+      expect(siblingQuery.fetchPctl).toBe(60);
+      expect(siblingOp.fetchPctl).toBe(60);
+    });
+
+    it("tree: boundary/query/op consistent when memoized still in-flight", () => {
+      const data = parseYamlDashboard(MEMOIZED_INFLIGHT_YAML);
+      const t = data.tree[50];
+      const child2Boundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Child2",
+      )!;
+      const child2Query = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Child2",
+      )!;
+      const child2Op = t.nodes.find(
+        (n) => n.type === "subgraph-op" && n.boundaryPath === "Layout.Child2",
+      )!;
+      // All three levels: 50ms (still in-flight from sibling)
+      expect(child2Boundary.fetchPctl).toBe(50);
+      expect(child2Query.fetchPctl).toBe(50);
+      expect(child2Op.fetchPctl).toBe(50);
     });
 
     it("computes blocked_ms from thread simulation", () => {
@@ -643,6 +961,45 @@ boundaries:
       const w = data.waterfall[50];
       const lcpBoundaries = w.ssrTimings.filter((t) => t.lcpCritical);
       expect(lcpBoundaries.length).toBeGreaterThanOrEqual(2); // Layout, Main.Hero, Main.Title
+    });
+
+    it("Layout has prefetchQueries including getProductInfo", () => {
+      const yamlContent = readFileSync(
+        join(__dirname, "..", "public", "example-page.yaml"),
+        "utf-8",
+      );
+      const data = parseYamlDashboard(yamlContent);
+      const w = data.waterfall[50];
+      const layout = w.ssrTimings.find((t) => t.name === "Layout")!;
+      expect(layout.prefetchQueries).toContain("getProductInfo");
+    });
+
+    it("Main.Title shows memoized getProductInfo with prefetch remaining time in tree", () => {
+      const yamlContent = readFileSync(
+        join(__dirname, "..", "public", "example-page.yaml"),
+        "utf-8",
+      );
+      const data = parseYamlDashboard(yamlContent);
+      const t = data.tree[50];
+      const titleQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath.endsWith("Main.Title"),
+      )!;
+      expect(titleQuery.name).toBe("getProductInfo");
+      expect(titleQuery.cached).toBe(true);
+    });
+
+    it("Layout tree node has noAwait query for getProductInfo", () => {
+      const yamlContent = readFileSync(
+        join(__dirname, "..", "public", "example-page.yaml"),
+        "utf-8",
+      );
+      const data = parseYamlDashboard(yamlContent);
+      const t = data.tree[50];
+      const layoutPrefetchQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout" && n.name === "getProductInfo",
+      )!;
+      expect(layoutPrefetchQuery.noAwait).toBe(true);
+      expect(layoutPrefetchQuery.fetchPctl).toBeGreaterThan(0);
     });
 
     it("pricing-subgraph is the highest-variance (bottleneck)", () => {

@@ -358,8 +358,10 @@ function computeWaterfall(
   const scheduled: ScheduledBoundary[] = [];
 
   // Track in-flight prefetches: queryName → { wallStart when kicked off, fetch duration }
-  // Used to compute remaining time for cached descendants.
+  // Used to compute remaining time for memoized descendants.
   const prefetchRegistry = new Map<string, { wallStart: number; duration: number }>();
+  // Track first awaited execution of each query for memoization remaining time
+  const queryExecRegistry = new Map<string, { wallStart: number; duration: number }>();
 
   function schedule(
     nodes: BoundaryInfo[],
@@ -384,19 +386,36 @@ function computeWaterfall(
         prefetchRegistry.set(q.queryName, { wallStart: fetchStart, duration: prefetchDuration });
       }
 
-      // Compute effective fetch duration, accounting for cached queries
-      // that may have a prefetch in-flight
+      // Register awaited, non-cached query executions for memoization tracking
+      for (const q of b.queries) {
+        if (q.noAwait) continue;
+        const allCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
+        if (allCached) continue;
+        if (!queryExecRegistry.has(q.queryName)) {
+          let qDuration: number;
+          if (q.duration !== undefined) {
+            qDuration = atPctl(q.duration, pctl);
+          } else {
+            const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
+            qDuration = Math.max(0, ...opDurations);
+          }
+          queryExecRegistry.set(q.queryName, { wallStart: fetchStart, duration: qDuration });
+        }
+      }
+
+      // Compute effective fetch duration, accounting for memoized queries
+      // that may have a prefetch or prior execution in-flight
       let fetchDuration = fetchByPath.get(b.path) ?? 0;
       // If the boundary's own awaited-query duration is 0 (e.g. all queries are
-      // cached), check if any cached query has remaining prefetch time
+      // memoized), check if any memoized query has remaining time from prefetch or prior exec
       if (fetchDuration === 0) {
         for (const q of b.queries) {
           if (q.noAwait) continue;
           const allCached = q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
           if (allCached) {
-            const prefetch = prefetchRegistry.get(q.queryName);
-            if (prefetch) {
-              const remaining = Math.max(0, (prefetch.wallStart + prefetch.duration) - fetchStart);
+            const source = prefetchRegistry.get(q.queryName) ?? queryExecRegistry.get(q.queryName);
+            if (source) {
+              const remaining = Math.max(0, (source.wallStart + source.duration) - fetchStart);
               fetchDuration = Math.max(fetchDuration, remaining);
             }
           }
@@ -423,11 +442,12 @@ function computeWaterfall(
 
   // Build BoundaryTiming[] with thread simulation
   const ssrTimings: WaterfallTiming[] = scheduled.map((s) => {
-    const queryNames = s.info.queries.map((q) => q.queryName).filter(Boolean);
+    const queryNames = s.info.queries.filter((q) => !q.noAwait).map((q) => q.queryName).filter(Boolean);
     const queryName = queryNames[0] ?? "";
+    const prefetchQueryNames = s.info.queries.filter((q) => q.noAwait).map((q) => q.queryName).filter(Boolean);
 
-    // A boundary is "fully cached" only if all its queries are cached AND
-    // there is no remaining prefetch wait time (fetchDuration === 0)
+    // A boundary is "fully memoized" only if all its queries are cached AND
+    // there is no remaining wait time (fetchDuration === 0)
     const allOpsCached = s.info.queries.length > 0 &&
       s.info.queries.every((q) => q.noAwait || q.ops.every((op) => resolveOpDuration(op.value, pctl).cached));
     const isCached = allOpsCached && s.fetchDuration === 0;
@@ -458,6 +478,7 @@ function computeWaterfall(
       queryNames,
       cached: isCached,
       subgraphColor,
+      prefetchQueries: prefetchQueryNames.length > 0 ? prefetchQueryNames : undefined,
     };
   });
 
@@ -524,6 +545,8 @@ function computeTree(
   // using real pctl fetch durations, not the fudged waterfall values)
   const wallStartByPath = new Map<string, number>();
   const treePrefetchRegistry = new Map<string, { wallStart: number; duration: number }>();
+  // Track first awaited execution of each query for memoization remaining time
+  const treeQueryExecRegistry = new Map<string, { wallStart: number; duration: number }>();
 
   function scheduleBoundaries(roots: BoundaryInfo[], parentFetchEnd: number) {
     for (const b of roots) {
@@ -542,16 +565,33 @@ function computeTree(
         treePrefetchRegistry.set(q.queryName, { wallStart: fetchStart, duration: prefetchDuration });
       }
 
+      // Register awaited, non-cached query executions for memoization tracking
+      for (const q of b.queries) {
+        if (q.noAwait) continue;
+        const allCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
+        if (allCached) continue;
+        if (!treeQueryExecRegistry.has(q.queryName)) {
+          let qDuration: number;
+          if (q.duration !== undefined) {
+            qDuration = atPctl(q.duration, pctl);
+          } else {
+            const opDurations = q.ops.map((op) => resolveOpDuration(op.value, pctl).duration);
+            qDuration = Math.max(0, ...opDurations);
+          }
+          treeQueryExecRegistry.set(q.queryName, { wallStart: fetchStart, duration: qDuration });
+        }
+      }
+
       // Compute awaited fetch duration (skip noAwait queries)
       let boundaryFetch = 0;
       for (const q of b.queries) {
         if (q.noAwait) continue;
         const allCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
         if (allCached) {
-          // Check for in-flight prefetch remaining time
-          const prefetch = treePrefetchRegistry.get(q.queryName);
-          if (prefetch) {
-            const remaining = Math.max(0, (prefetch.wallStart + prefetch.duration) - fetchStart);
+          // Check for in-flight prefetch or prior execution remaining time
+          const source = treePrefetchRegistry.get(q.queryName) ?? treeQueryExecRegistry.get(q.queryName);
+          if (source) {
+            const remaining = Math.max(0, (source.wallStart + source.duration) - fetchStart);
             boundaryFetch = Math.max(boundaryFetch, remaining);
           }
           continue;
@@ -592,9 +632,10 @@ function computeTree(
       if (q.noAwait) continue;
       const allCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
       if (allCached) {
-        const prefetch = treePrefetchRegistry.get(q.queryName);
-        if (prefetch) {
-          const remaining = Math.max(0, (prefetch.wallStart + prefetch.duration) - wallStart);
+        // Check for in-flight prefetch or prior execution remaining time
+        const source = treePrefetchRegistry.get(q.queryName) ?? treeQueryExecRegistry.get(q.queryName);
+        if (source) {
+          const remaining = Math.max(0, (source.wallStart + source.duration) - wallStart);
           boundaryFetch = Math.max(boundaryFetch, remaining);
         }
         continue;
@@ -642,20 +683,8 @@ function computeTree(
       }
       const isCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
 
-      // noAwait queries show their full duration (they do fire) but are marked
-      // specially; cached queries with a prefetch show remaining time
-      let effectiveFetch = queryDuration;
-      if (q.noAwait) {
-        // Prefetch: fires the request but doesn't suspend
-        effectiveFetch = 0;
-      } else if (isCached) {
-        const prefetch = treePrefetchRegistry.get(q.queryName);
-        if (prefetch) {
-          effectiveFetch = Math.max(0, (prefetch.wallStart + prefetch.duration) - wallStart);
-        } else {
-          effectiveFetch = 0;
-        }
-      }
+      // Query/op rows always show raw actual duration (the UI fades memoized rows).
+      // The boundary row already computes its own remaining-time logic separately.
 
       nodes.push({
         name: q.queryName,
@@ -664,29 +693,31 @@ function computeTree(
         type: "query",
         boundaryPath: b.path,
         wallStartPctl: 0,
-        fetchPctl: effectiveFetch,
+        fetchPctl: queryDuration,
         renderCostPctl: 0,
         blockedPctl: 0,
-        totalPctl: effectiveFetch,
+        totalPctl: queryDuration,
         slo: 0,
         lcpCritical: false,
-        cached: isCached && effectiveFetch === 0,
+        cached: isCached,
+        noAwait: q.noAwait || undefined,
         hasChildren: false,
         phase: b.phase,
       });
 
-      // Group ops by subgraph
+      // Group ops by subgraph — always use raw actual duration (UI fades memoized)
       const opsBySubgraph = new Map<string, { durations: number[]; cached: boolean }>();
       for (const op of q.ops) {
         const { duration, cached } = resolveOpDuration(op.value, pctl);
         if (cached) cachedOps++; else uncachedOps++;
 
+        const opDuration = duration;
         const existing = opsBySubgraph.get(op.subgraphName);
         if (existing) {
-          existing.durations.push(duration);
+          existing.durations.push(opDuration);
           existing.cached = existing.cached && cached;
         } else {
-          opsBySubgraph.set(op.subgraphName, { durations: [duration], cached });
+          opsBySubgraph.set(op.subgraphName, { durations: [opDuration], cached });
         }
       }
 
@@ -703,10 +734,11 @@ function computeTree(
           type: "subgraph-op",
           boundaryPath: b.path,
           wallStartPctl: 0,
-          fetchPctl: sgData.cached ? 0 : maxDuration,
+          // Show actual duration even for memoized ops (UI fades them)
+          fetchPctl: maxDuration,
           renderCostPctl: 0,
           blockedPctl: 0,
-          totalPctl: sgData.cached ? 0 : maxDuration,
+          totalPctl: maxDuration,
           slo: sgSlo,
           lcpCritical: false,
           cached: sgData.cached,

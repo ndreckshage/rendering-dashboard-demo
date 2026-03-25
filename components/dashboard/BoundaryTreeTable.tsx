@@ -206,6 +206,7 @@ interface TreeNode {
   slo: number;
   lcpCritical: boolean;
   cached: boolean;
+  noAwait?: boolean;
   subgraphName?: string;
   subgraphColor?: string;
   hasChildren: boolean;
@@ -308,6 +309,27 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
       }
     }
 
+    // Build lookup of actual query durations from non-cached executions.
+    // Cached queries record duration_ms=0, but we want to show the real cost.
+    const actualQueryDuration = new Map<string, number[]>();
+    for (const q of queries) {
+      if (!q.fullyCached) {
+        const list = actualQueryDuration.get(q.queryName) ?? [];
+        list.push(q.duration_ms);
+        actualQueryDuration.set(q.queryName, list);
+      }
+    }
+    // Same for subgraph ops
+    const actualOpDuration = new Map<string, number[]>();
+    for (const op of subgraphOps) {
+      if (!op.cached) {
+        const key = `${op.queryName}:${op.subgraphName}`;
+        const list = actualOpDuration.get(key) ?? [];
+        list.push(op.duration_ms);
+        actualOpDuration.set(key, list);
+      }
+    }
+
     const nodes: TreeNode[] = [];
 
     for (const item of treeStructure) {
@@ -342,6 +364,12 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
         const metrics = queryByKey.get(key) ?? [];
         const durations = metrics.map((m) => m.duration_ms);
         const isCached = metrics.length > 0 && metrics.every((m) => m.fullyCached);
+        // Cached queries record duration_ms=0; use actual duration from the
+        // non-cached execution of the same query so users see the real cost.
+        const sourceDurations = isCached
+          ? (actualQueryDuration.get(item.queryName!) ?? durations)
+          : durations;
+        const queryDurationPctl = percentile(sourceDurations, pctl);
 
         nodes.push({
           name: item.queryName!,
@@ -350,10 +378,10 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           type: "query",
           boundaryPath: item.boundaryPath,
           wallStartPctl: 0,
-          fetchPctl: isCached ? 0 : percentile(durations, pctl),
+          fetchPctl: queryDurationPctl,
           renderCostPctl: 0,
           blockedPctl: 0,
-          totalPctl: isCached ? 0 : percentile(durations, pctl),
+          totalPctl: queryDurationPctl,
           slo: 0,
           lcpCritical: false,
           cached: isCached,
@@ -379,6 +407,12 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           ? SUBGRAPHS[sgName as SubgraphName]?.color
           : undefined;
 
+        // Cached ops record duration_ms=0; use actual duration from the
+        // non-cached execution so users see the real cost.
+        const sourceDurations = isCached
+          ? (actualOpDuration.get(`${item.queryName}:${sgName}`) ?? durations)
+          : durations;
+        const durationPctl = percentile(sourceDurations, pctl);
         nodes.push({
           name: sgName || item.opName!,
           path: item.path,
@@ -386,10 +420,10 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           type: "subgraph-op",
           boundaryPath: item.boundaryPath,
           wallStartPctl: 0,
-          fetchPctl: isCached ? 0 : percentile(durations, pctl),
+          fetchPctl: durationPctl,
           renderCostPctl: 0,
           blockedPctl: 0,
-          totalPctl: isCached ? 0 : percentile(durations, pctl),
+          totalPctl: durationPctl,
           slo: sgSlo,
           lcpCritical: false,
           cached: isCached,
@@ -676,11 +710,16 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
           exceeded its SLO at this percentile. If no SLO is defined, the cell shows &quot;—&quot;.
         </p>
         <p>
-          <strong className="text-zinc-300">Cache</strong> indicators show whether a subgraph call was
+          <strong className="text-zinc-300">Memoized</strong> indicators show whether a subgraph call was
           deduplicated by React&apos;s request memoization (i.e. multiple components requested the same data
           and React served it from an in-flight or completed fetch). This is <em>not</em> a backend/Redis
-          cache — it&apos;s React&apos;s built-in deduplication within a single render pass. Deduplicated
-          operations have near-zero latency and don&apos;t count toward the service&apos;s performance budget.
+          cache — it&apos;s React&apos;s built-in deduplication within a single render pass. If the original
+          query is still in-flight when a memoized consumer renders, the remaining wait time is shown faded.
+        </p>
+        <p>
+          <strong className="text-zinc-300">Prefetch</strong> queries are fired early by a parent boundary
+          with <code>await: false</code> — the boundary doesn&apos;t suspend, but the request starts in the
+          background. Descendant boundaries that need the same data benefit from the head start.
         </p>
         <p>
           <strong className="text-zinc-300">Server</strong> rows ran during SSR (HTML streaming).
@@ -914,11 +953,11 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                         )}
                         <span className="text-zinc-400">{node.name.replace("-subgraph", "")}</span>
                         {node.cached && (
-                          <span className="text-xs text-cyan-600 font-medium">cached</span>
+                          <span className="text-xs text-cyan-600 font-medium">memoized</span>
                         )}
                       </span>
                     ) : node.type === "query" ? (
-                      <span className={`flex items-center ${node.cached ? "opacity-50" : ""}`}>
+                      <span className={`flex items-center ${node.cached || node.noAwait ? "opacity-50" : ""}`}>
                         {queryHasChildren.has(node.path) ? (
                           <button
                             onClick={(e) => { e.stopPropagation(); toggleQueryExpand(node.path); }}
@@ -931,8 +970,11 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                         )}
                         <span className="text-teal-500/80">query:</span>
                         <span className="text-teal-400">{node.name}</span>
-                        {node.cached && (
-                          <span className="text-xs text-cyan-600 font-medium ml-1.5">cached</span>
+                        {node.noAwait && (
+                          <span className="text-xs text-orange-500 font-medium ml-1.5">prefetch</span>
+                        )}
+                        {node.cached && !node.noAwait && (
+                          <span className="text-xs text-cyan-600 font-medium ml-1.5">memoized</span>
                         )}
                       </span>
                     ) : (
@@ -974,8 +1016,12 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                 <td className="text-right py-1.5 px-2 text-zinc-400">
                   {node.type === "boundary" ? `${node.wallStartPctl}ms` : ""}
                 </td>
-                <td className={`text-right py-1.5 px-2 ${node.cached ? "text-zinc-700" : "text-zinc-300"}`}>
-                  {node.cached ? "0ms" : `${node.fetchPctl}ms`}
+                <td className={`text-right py-1.5 px-2 ${node.cached || node.noAwait ? "text-zinc-700" : "text-zinc-300"}`}>
+                  {node.noAwait
+                    ? <span className="opacity-50">{node.fetchPctl}ms</span>
+                    : node.cached
+                      ? <span className="opacity-60">{node.fetchPctl}ms</span>
+                      : `${node.fetchPctl}ms`}
                 </td>
                 <td className="text-right py-1.5 px-2 text-zinc-300">
                   {node.type === "boundary" ? `${node.renderCostPctl}ms` : ""}
@@ -987,12 +1033,14 @@ export function BoundaryTreeTable({ boundaries, queries, subgraphOps, pctl, mock
                       : "\u2014"
                     : ""}
                 </td>
-                <td className={`text-right py-1.5 px-2 ${node.cached ? "text-zinc-700" : "text-zinc-300"}`}>
+                <td className={`text-right py-1.5 px-2 ${node.cached || node.noAwait ? "text-zinc-700" : "text-zinc-300"}`}>
                   {node.type === "boundary"
                     ? `${node.totalPctl}ms`
-                    : node.cached
-                      ? "0ms"
-                      : `${node.fetchPctl}ms`}
+                    : node.noAwait
+                      ? <span className="opacity-50">{node.fetchPctl}ms</span>
+                      : node.cached
+                        ? <span className="opacity-60">{node.fetchPctl}ms</span>
+                        : `${node.fetchPctl}ms`}
                 </td>
                 <td className={`text-right py-1.5 px-2 ${noSlo ? "text-amber-500/70 italic" : "text-zinc-500"}`}>
                   {isSubgraphOp && !node.cached
