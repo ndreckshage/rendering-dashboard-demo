@@ -683,10 +683,19 @@ function computeTree(
       }
       const isCached = q.ops.length > 0 && q.ops.every((op) => resolveOpDuration(op.value, pctl).cached);
 
-      // For display in the tree: always show the actual query duration (faded for
-      // memoized/prefetch in the UI). The remaining-time calculation only matters for
-      // the *boundary* row's fetch — individual query/op rows show real latency.
+      // Compute effective fetch: for memoized queries, show the time this
+      // component actually waited (remaining from prefetch/prior exec).
+      // For noAwait (prefetch), show the full duration (faded in UI).
+      // This keeps boundary, query, and op rows consistent.
       let effectiveFetch = queryDuration;
+      if (isCached && !q.noAwait) {
+        const source = treePrefetchRegistry.get(q.queryName) ?? treeQueryExecRegistry.get(q.queryName);
+        if (source) {
+          effectiveFetch = Math.max(0, (source.wallStart + source.duration) - wallStart);
+        } else {
+          effectiveFetch = 0;
+        }
+      }
 
       nodes.push({
         name: q.queryName,
@@ -707,18 +716,22 @@ function computeTree(
         phase: b.phase,
       });
 
-      // Group ops by subgraph
+      // Group ops by subgraph — use the effective (remaining) fetch for cached
+      // ops so that boundary→query→op are all consistent
       const opsBySubgraph = new Map<string, { durations: number[]; cached: boolean }>();
       for (const op of q.ops) {
         const { duration, cached } = resolveOpDuration(op.value, pctl);
         if (cached) cachedOps++; else uncachedOps++;
 
+        // For cached ops, use the query's effective remaining time (not raw duration)
+        // so the op row matches the query and boundary rows
+        const opDuration = cached ? effectiveFetch : duration;
         const existing = opsBySubgraph.get(op.subgraphName);
         if (existing) {
-          existing.durations.push(duration);
+          existing.durations.push(opDuration);
           existing.cached = existing.cached && cached;
         } else {
-          opsBySubgraph.set(op.subgraphName, { durations: [duration], cached });
+          opsBySubgraph.set(op.subgraphName, { durations: [opDuration], cached });
         }
       }
 

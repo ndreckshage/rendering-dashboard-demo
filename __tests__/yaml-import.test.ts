@@ -506,15 +506,18 @@ describe("parseYamlDashboard", () => {
       expect(content.depth).toBe(1);
     });
 
-    it("marks cached ops", () => {
+    it("marks cached ops — query/op match boundary (remaining time)", () => {
       const data = parseYamlDashboard(CACHED_OPS_YAML);
       const t = data.tree[50];
       const bulletQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.Bullets",
       )!;
+      const bulletBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Bullets",
+      )!;
       expect(bulletQuery.cached).toBe(true);
-      // Shows actual query duration (faded in UI), not 0
-      expect(bulletQuery.fetchPctl).toBe(30);
+      // Query shows same remaining time as boundary (0 — original resolved before consumer)
+      expect(bulletQuery.fetchPctl).toBe(bulletBoundary.fetchPctl);
     });
 
     it("tracks call summary (uncached vs cached ops)", () => {
@@ -560,15 +563,18 @@ describe("parseYamlDashboard", () => {
       expect(detailQuery.cached).toBe(true); // memoized, but still shows remaining time
     });
 
-    it("tree: memoized query always shows actual duration even when prefetch completed", () => {
+    it("tree: memoized query shows 0 when prefetch already completed (matches boundary)", () => {
       const data = parseYamlDashboard(PREFETCH_COMPLETED_YAML);
       const t = data.tree[50];
+      const detailBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "ProductDetail",
+      )!;
       const detailQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.ProductDetail",
       )!;
-      // Shows actual query duration (80ms), not remaining time (0ms)
-      // Boundary row shows 0ms fetch since prefetch completed; query row shows real cost faded
-      expect(detailQuery.fetchPctl).toBe(80);
+      // Prefetch completed → boundary=0, query=0, op=0 (all consistent)
+      expect(detailBoundary.fetchPctl).toBe(0);
+      expect(detailQuery.fetchPctl).toBe(0);
       expect(detailQuery.cached).toBe(true);
     });
 
@@ -603,15 +609,19 @@ describe("parseYamlDashboard", () => {
       expect(child2Query.fetchPctl).toBe(50);
     });
 
-    it("tree: memoized query shows actual duration even when original completed", () => {
+    it("tree: memoized query shows 0 when original completed (matches boundary)", () => {
       const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
       const t = data.tree[50];
+      const siblingBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Sibling",
+      )!;
       const siblingQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.Sibling",
       )!;
-      // Query row always shows actual latency (60ms) faded — boundary row shows 0ms fetch
+      // Original completed → 0ms across boundary/query/op
+      expect(siblingBoundary.fetchPctl).toBe(0);
       expect(siblingQuery.cached).toBe(true);
-      expect(siblingQuery.fetchPctl).toBe(60);
+      expect(siblingQuery.fetchPctl).toBe(0);
     });
 
     it("tree: memoized boundary fetch includes remaining time impact", () => {
@@ -634,16 +644,20 @@ describe("parseYamlDashboard", () => {
       expect(siblingBoundary.fetchPctl).toBe(0);
     });
 
-    it("tree: memoized query shows actual duration regardless of remaining time", () => {
+    it("tree: memoized query shows remaining time matching boundary", () => {
       const data = parseYamlDashboard(PREFETCH_PARTIAL_YAML);
       const t = data.tree[50];
+      const detailBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Detail",
+      )!;
       const detailQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.Detail",
       )!;
-      // Query row shows actual duration (80ms) faded. Boundary row shows
-      // remaining time (40ms) since that's the real rendering impact.
+      // Prefetch 80ms started at 0, Detail starts at 40ms. Remaining = 40ms.
+      // Boundary, query, and op all show 40ms consistently.
+      expect(detailBoundary.fetchPctl).toBe(40);
       expect(detailQuery.cached).toBe(true);
-      expect(detailQuery.fetchPctl).toBe(80);
+      expect(detailQuery.fetchPctl).toBe(40);
     });
 
     it("tree: prefetch query with await:false on same boundary as awaited queries", () => {
@@ -665,32 +679,59 @@ describe("parseYamlDashboard", () => {
       expect(layoutBoundary.fetchPctl).toBe(40);
     });
 
-    it("tree: memoized subgraph-op shows actual duration (not 0)", () => {
+    it("tree: boundary/query/op all show consistent remaining time", () => {
       const data = parseYamlDashboard(CACHED_OPS_YAML);
       const t = data.tree[50];
+      const bulletBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Bullets",
+      )!;
+      const bulletQuery = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Bullets",
+      )!;
       const bulletOp = t.nodes.find(
         (n) => n.type === "subgraph-op" && n.boundaryPath === "Layout.Bullets",
       )!;
+      // All three levels show the same value (remaining time = 0 since resolved)
+      expect(bulletBoundary.fetchPctl).toBe(0);
+      expect(bulletQuery.fetchPctl).toBe(0);
+      expect(bulletOp.fetchPctl).toBe(0);
       expect(bulletOp.cached).toBe(true);
-      // Should show actual op duration (30ms), not 0 — UI fades memoized ops
-      expect(bulletOp.fetchPctl).toBe(30);
-      expect(bulletOp.totalPctl).toBe(30);
     });
 
-    it("tree: memoized query and subgraph-op both show actual duration", () => {
+    it("tree: boundary/query/op consistent when memoized resolved", () => {
       const data = parseYamlDashboard(MEMOIZED_SIBLING_YAML);
       const t = data.tree[50];
+      const siblingBoundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Sibling",
+      )!;
       const siblingQuery = t.nodes.find(
         (n) => n.type === "query" && n.boundaryPath === "Layout.Sibling",
       )!;
       const siblingOp = t.nodes.find(
         (n) => n.type === "subgraph-op" && n.boundaryPath === "Layout.Sibling",
       )!;
-      // Both show actual duration (faded in UI) — boundary row shows 0ms fetch
-      expect(siblingQuery.cached).toBe(true);
-      expect(siblingQuery.fetchPctl).toBe(60);
-      expect(siblingOp.cached).toBe(true);
-      expect(siblingOp.fetchPctl).toBe(60);
+      // All three levels: 0ms (original resolved before consumer)
+      expect(siblingBoundary.fetchPctl).toBe(0);
+      expect(siblingQuery.fetchPctl).toBe(0);
+      expect(siblingOp.fetchPctl).toBe(0);
+    });
+
+    it("tree: boundary/query/op consistent when memoized still in-flight", () => {
+      const data = parseYamlDashboard(MEMOIZED_INFLIGHT_YAML);
+      const t = data.tree[50];
+      const child2Boundary = t.nodes.find(
+        (n) => n.type === "boundary" && n.name === "Child2",
+      )!;
+      const child2Query = t.nodes.find(
+        (n) => n.type === "query" && n.boundaryPath === "Layout.Child2",
+      )!;
+      const child2Op = t.nodes.find(
+        (n) => n.type === "subgraph-op" && n.boundaryPath === "Layout.Child2",
+      )!;
+      // All three levels: 50ms (still in-flight from sibling)
+      expect(child2Boundary.fetchPctl).toBe(50);
+      expect(child2Query.fetchPctl).toBe(50);
+      expect(child2Op.fetchPctl).toBe(50);
     });
 
     it("computes blocked_ms from thread simulation", () => {
