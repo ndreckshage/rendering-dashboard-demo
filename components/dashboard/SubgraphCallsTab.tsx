@@ -259,6 +259,9 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
     return { exceeded, noSlo, hasSlo };
   }, [subgraphRows]);
 
+  const allExpanded = filteredRows.length > 0 && filteredRows.every((r) => expanded.has(r.name));
+  const allCollapsed = expanded.size === 0;
+
   const expandAll = useCallback(() => {
     setExpanded(new Set(filteredRows.map((r) => r.name)));
   }, [filteredRows]);
@@ -358,18 +361,22 @@ export function SubgraphCallsTab({ queries, subgraphOps, pctl, mock }: Props) {
 
       {/* Expand / Collapse controls */}
       <div className="flex gap-2">
-        <button
-          onClick={expandAll}
-          className="text-xs text-zinc-500 hover:text-zinc-300 px-2 py-1 rounded bg-zinc-800/50 hover:bg-zinc-800"
-        >
-          Expand All
-        </button>
-        <button
-          onClick={collapseAll}
-          className="text-xs text-zinc-500 hover:text-zinc-300 px-2 py-1 rounded bg-zinc-800/50 hover:bg-zinc-800"
-        >
-          Collapse All
-        </button>
+        {!allExpanded && (
+          <button
+            onClick={expandAll}
+            className="text-xs text-zinc-500 hover:text-zinc-300 px-2 py-1 rounded bg-zinc-800/50 hover:bg-zinc-800"
+          >
+            Expand All
+          </button>
+        )}
+        {!allCollapsed && (
+          <button
+            onClick={collapseAll}
+            className="text-xs text-zinc-500 hover:text-zinc-300 px-2 py-1 rounded bg-zinc-800/50 hover:bg-zinc-800"
+          >
+            Collapse All
+          </button>
+        )}
       </div>
 
       {/* Per-subgraph table */}
