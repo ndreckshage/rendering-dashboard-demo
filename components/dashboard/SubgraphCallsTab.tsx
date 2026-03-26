@@ -10,6 +10,8 @@ interface Props {
   pctl: number;
   /** Pre-computed data keyed by percentile (from YAML or live conversion) */
   mock: Record<number, DashboardSubgraphData>;
+  /** Subgraph names on the LCP critical path (excludes prefetch) */
+  lcpSubgraphs?: Set<string>;
 }
 
 interface CallerDetail {
@@ -43,9 +45,10 @@ function getSloSortValue(row: SubgraphSummary): number {
   return 1;                       // ok
 }
 
-export function SubgraphCallsTab({ pctl, mock }: Props) {
+export function SubgraphCallsTab({ pctl, mock, lcpSubgraphs }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sloFilter, setSloFilter] = useState<SloFilter>(null);
+  const [lcpFilter, setLcpFilter] = useState(false);
   const [sortField, setSortField] = useState<SortField>("callsPerReq");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -131,6 +134,7 @@ export function SubgraphCallsTab({ pctl, mock }: Props) {
 
   const filteredRows = useMemo(() => {
     let rows = subgraphRows;
+    if (lcpFilter && lcpSubgraphs) rows = rows.filter((r) => lcpSubgraphs.has(r.name));
     if (sloFilter === "exceeded") rows = rows.filter((r) => r.sloMs > 0 && r.subgraphLatencyPctl > r.sloMs);
     else if (sloFilter === "hasSlo") rows = rows.filter((r) => r.sloMs > 0);
     else if (sloFilter === "noSlo") rows = rows.filter((r) => r.sloMs === 0);
@@ -157,7 +161,7 @@ export function SubgraphCallsTab({ pctl, mock }: Props) {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return sorted;
-  }, [subgraphRows, sloFilter, sortField, sortDir]);
+  }, [subgraphRows, lcpFilter, lcpSubgraphs, sloFilter, sortField, sortDir]);
 
   const sloCounts = useMemo(() => {
     const exceeded = subgraphRows.filter((r) => r.sloMs > 0 && r.subgraphLatencyPctl > r.sloMs).length;
@@ -203,6 +207,22 @@ export function SubgraphCallsTab({ pctl, mock }: Props) {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs">
         <span className="text-zinc-600 mr-1">Filter:</span>
+        {lcpSubgraphs && lcpSubgraphs.size > 0 && (
+          <>
+            <button
+              onClick={() => setLcpFilter((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+                lcpFilter
+                  ? "border-blue-500 text-blue-300 bg-blue-500/10"
+                  : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full flex-shrink-0 bg-blue-400" />
+              LCP Path
+            </button>
+            <span className="text-zinc-800 mx-0.5">|</span>
+          </>
+        )}
         <button
           onClick={() => toggleSloFilter("exceeded")}
           className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
@@ -236,9 +256,9 @@ export function SubgraphCallsTab({ pctl, mock }: Props) {
           <span className="w-2 h-2 rounded-full flex-shrink-0 bg-green-400" />
           Has SLO ({sloCounts.hasSlo})
         </button>
-        {sloFilter && (
+        {(sloFilter || lcpFilter) && (
           <button
-            onClick={() => setSloFilter(null)}
+            onClick={() => { setSloFilter(null); setLcpFilter(false); }}
             className="text-zinc-500 hover:text-zinc-300 ml-2 underline"
           >
             Clear
